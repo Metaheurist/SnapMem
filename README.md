@@ -118,4 +118,6 @@ Signed URLs are normally fetched at runtime and are not stored in `urls.txt` unl
 
 The script installs requirements, ensures Chromium is installed for Playwright, then runs PyInstaller and writes the EXE to `dist/`.
 
+If `icon.png` is present, the build also installs Pillow, runs `scripts/generate_icon_set.py` to refresh `assets/icons/`, and passes `assets/icons/app-icon.ico` to PyInstaller (`--icon`). The same behavior runs in GitHub Actions.
+
 

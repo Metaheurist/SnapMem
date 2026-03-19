@@ -109,6 +109,29 @@ if ($Clean) {
     $pyinstallerArgs += @("--workpath", $isolatedWorkPath)
 }
 
+# App icon: generate ICO/PNGs from icon.png (GitHub Actions + local builds), then pass to PyInstaller.
+$iconSrc = Join-Path $scriptDir "icon.png"
+$iconGen = Join-Path $scriptDir "scripts\generate_icon_set.py"
+$iconIco = Join-Path $scriptDir "assets\icons\app-icon.ico"
+$iconOutDir = Join-Path $scriptDir "assets\icons"
+if (Test-Path -LiteralPath $iconSrc) {
+    if (Test-Path -LiteralPath $iconGen) {
+        Write-Host "Generating app icon set from icon.png..."
+        try {
+            python -m pip install pillow
+            python $iconGen --input $iconSrc --out-dir $iconOutDir
+        } catch {
+            Write-Host "Warning: icon generation failed (EXE will use default icon): $_" -ForegroundColor Yellow
+        }
+    }
+}
+if (Test-Path -LiteralPath $iconIco) {
+    $pyinstallerArgs += @("--icon", $iconIco)
+    Write-Host "Using PyInstaller --icon $iconIco"
+} else {
+    Write-Host "No app-icon.ico found at $iconIco; building without custom icon." -ForegroundColor Yellow
+}
+
 # Bundle Playwright browsers so the EXE works without requiring `playwright install` on the target machine.
 # Playwright uses the PLAYWRIGHT_BROWSERS_PATH env var when present.
 if ($playwrightBrowsersPath -and (Test-Path -LiteralPath $playwrightBrowsersPath)) {

@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - master
   workflow_dispatch:
 
 permissions:
@@ -89,6 +90,7 @@ jobs:
           python-version: "3.11"
           architecture: ${{ matrix.py_arch }}
 
+      # build_windows_exe.ps1 generates assets/icons from icon.png (Pillow) and passes --icon to PyInstaller.
       - name: Build EXE via existing script
         shell: pwsh
         run: |
