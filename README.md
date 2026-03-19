@@ -3,6 +3,10 @@
 Downloader for Snapchat “Download My Data” exports:
 downloads the signed ZIPs, extracts them, and copies media files to a single `media/` folder.
 
+## App screenshot
+
+![SC Memories Downloader app UI](docs/images/app-screenshot.png)
+
 ## What’s included
 
 - Dark “SC-style” UI (gray + yellow)
@@ -72,9 +76,9 @@ python .\Downloader.py --skip-fetch-urls --urls-file .\urls.txt
 
 ```mermaid
 flowchart TD
-  A[Refresh URLs (Playwright)] --> B[Stage 1: Download all ZIPs in parallel]
-  B --> C[Stage 2: Unzip each ZIP sequentially]
-  C --> D[Collect media files into media/]
+  A["Refresh URLs via Playwright"] --> B["Stage 1 - Download all ZIP files in parallel"]
+  B --> C["Stage 2 - Unzip each ZIP file sequentially"]
+  C --> D["Collect media files into media folder"]
   D --> E[Done]
 ```
 
@@ -83,7 +87,7 @@ flowchart TD
 ```mermaid
 flowchart LR
   X[Previous run] --> Y[downloads/mydata~X.zip.part exists]
-  Y --> Z[Next run: HTTP Range bytes=<part-size>-]
+  Y --> Z["Next run uses HTTP Range from existing part size"]
   Z --> W[Append data until ZIP is complete]
   W --> U[Rename to downloads/mydata~X.zip]
 ```
