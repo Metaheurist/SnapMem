@@ -1,0 +1,7 @@
+urls.txt
+downloads/
+extracted/
+media/
+*.part
+__pycache__/
+*.pyc
