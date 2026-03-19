@@ -1,0 +1,143 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  bump-version:
+    # Prevent infinite loops when this workflow commits the version bump.
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Bump persisted build version
+        id: bump
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION_FILE=".github/build-version.txt"
+          if [[ ! -f "$VERSION_FILE" ]]; then
+            current="1.0.0"
+          else
+            current="$(tr -d '\r\n[:space:]' < "$VERSION_FILE")"
+            if [[ -z "$current" ]]; then
+              current="1.0.0"
+            fi
+          fi
+
+          IFS='.' read -r major minor patch <<< "$current"
+          if [[ -z "${major:-}" || -z "${minor:-}" || -z "${patch:-}" ]]; then
+            echo "Invalid version format in $VERSION_FILE: $current"
+            exit 1
+          fi
+
+          if (( patch >= 99 )); then
+            patch=0
+            minor=$((minor + 1))
+          else
+            patch=$((patch + 1))
+          fi
+
+          next="${major}.${minor}.${patch}"
+          echo "$next" > "$VERSION_FILE"
+          echo "version=$next" >> "$GITHUB_OUTPUT"
+          echo "Bumped version: $current -> $next"
+
+      - name: Commit and push bumped version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ steps.bump.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/build-version.txt
+          git commit -m "chore: bump build version to ${version} [skip ci]"
+          git push
+
+  build:
+    name: Build EXE (${{ matrix.arch }})
+    needs: bump-version
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            py_arch: x64
+          - arch: x86
+            py_arch: x86
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python (${{ matrix.py_arch }})
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          architecture: ${{ matrix.py_arch }}
+
+      - name: Build EXE via existing script
+        shell: pwsh
+        run: |
+          $version = "${{ needs.bump-version.outputs.version }}"
+          $outputName = "SC Memories Downloader-v$version-win-${{ matrix.arch }}"
+          ./build_windows_exe.ps1 -OutputName $outputName -Clean
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SC-Memories-Downloader-${{ needs.bump-version.outputs.version }}-${{ matrix.arch }}
+          path: |
+            dist/SC Memories Downloader-v${{ needs.bump-version.outputs.version }}-win-${{ matrix.arch }}.exe
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs:
+      - bump-version
+      - build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download x64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SC-Memories-Downloader-${{ needs.bump-version.outputs.version }}-x64
+          path: release-assets
+
+      - name: Download x86 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SC-Memories-Downloader-${{ needs.bump-version.outputs.version }}-x86
+          path: release-assets
+
+      - name: Create release and mark as latest
+        uses: ncipollo/release-action@v1
+        with:
+          tag: v${{ needs.bump-version.outputs.version }}
+          name: SnapMem v${{ needs.bump-version.outputs.version }}
+          body: |
+            Automated Windows build for SnapMem.
+
+            Version: `${{ needs.bump-version.outputs.version }}`
+            Includes:
+            - x64 EXE
+            - x86 EXE
+          artifacts: "release-assets/*.exe"
+          artifactErrorsFailBuild: true
+          generateReleaseNotes: true
+          makeLatest: true
+          allowUpdates: true
+          token: ${{ secrets.GITHUB_TOKEN }}
