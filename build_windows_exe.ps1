@@ -1,7 +1,7 @@
 param(
     [string]$EntryScript = "Downloader.py",
     [string]$RequirementsFile = "requirements.txt",
-    [string]$OutputName = "Downloader",
+    [string]$OutputName = "SC Memories Downloader",
     [switch]$Clean
 )
 

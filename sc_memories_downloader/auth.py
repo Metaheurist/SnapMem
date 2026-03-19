@@ -48,6 +48,8 @@ def fetch_snapchat_export_urls(
     configure_playwright_browsers_path()
     try:
         # Local import so importing the package doesn't require Playwright at runtime.
+        from playwright.sync_api import Error as PlaywrightError  # type: ignore[import-not-found]
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError  # type: ignore[import-not-found]
         from playwright.sync_api import sync_playwright  # type: ignore[import-not-found]
     except Exception:
         print(
@@ -68,10 +70,16 @@ def fetch_snapchat_export_urls(
 
     def scrape_urls_from_page(page) -> list[str]:
         loc = page.locator('a[href*="mydata~"][href*=".zip"]')
-        count = loc.count()
+        try:
+            count = loc.count()
+        except PlaywrightError:
+            return []
         if count == 0:
             return []
-        urls = loc.evaluate_all('els => els.map(e => e.getAttribute("href")).filter(Boolean)')
+        try:
+            urls = loc.evaluate_all('els => els.map(e => e.getAttribute("href")).filter(Boolean)')
+        except PlaywrightError:
+            return []
         cleaned: list[str] = []
         for u in urls:
             s = str(u).strip()
@@ -89,27 +97,83 @@ def fetch_snapchat_export_urls(
         return out
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
-        context = browser.new_context()
+        browser = None
+        for launch_kwargs in (
+            {"headless": False, "channel": "msedge", "args": ["--start-maximized"]},
+            {"headless": False, "args": ["--start-maximized"]},
+        ):
+            try:
+                browser = p.chromium.launch(**launch_kwargs)
+                break
+            except Exception:
+                browser = None
+        if browser is None:
+            raise RuntimeError("Failed to launch a Playwright browser (Edge/Chromium).")
+
+        context = browser.new_context(no_viewport=True)
         page = context.new_page()
-        page.goto(SNAPCHAT_URL, wait_until="domcontentloaded")
+
+        try:
+            page.goto(SNAPCHAT_URL, wait_until="domcontentloaded", timeout=60000)
+        except PlaywrightTimeoutError:
+            print("Startup navigation timed out. Continue login manually in the opened browser window.")
+        except PlaywrightError as e:
+            print(f"Startup navigation warning: {e}")
 
         start = time.time()
         urls: list[str] = []
+        last_refresh_attempt = 0.0
 
         while time.time() - start < timeout_sec:
-            # If exports are collapsed, try expanding.
-            try:
-                btn = page.locator('button:has-text("Show exports")')
-                if btn.count() > 0:
-                    btn.first.click()
-            except Exception:
-                pass
+            if not context.pages:
+                raise RuntimeError("Browser window was closed before URLs were found.")
 
-            page.wait_for_timeout(1000)
-            urls = scrape_urls_from_page(page)
+            # If exports are collapsed, try expanding.
+            all_pages = list(context.pages)
+            for open_page in all_pages:
+                if open_page.is_closed():
+                    continue
+                try:
+                    for selector in (
+                        'button:has-text("Show exports")',
+                        'button:has-text("View exports")',
+                        'button:has-text("Exports")',
+                    ):
+                        btn = open_page.locator(selector)
+                        if btn.count() > 0:
+                            btn.first.click(timeout=500)
+                            break
+                except Exception:
+                    continue
+
+            # Scrape from all open pages (Snapchat auth can swap tabs/pages).
+            scraped: list[str] = []
+            for open_page in all_pages:
+                if open_page.is_closed():
+                    continue
+                scraped.extend(scrape_urls_from_page(open_page))
+
+            # Deduplicate while preserving order.
+            seen_urls: set[str] = set()
+            urls = []
+            for u in scraped:
+                if u in seen_urls:
+                    continue
+                seen_urls.add(u)
+                urls.append(u)
             if len(urls) >= min_urls:
                 break
+            if not urls and time.time() - last_refresh_attempt >= 20:
+                last_refresh_attempt = time.time()
+                try:
+                    if not page.is_closed():
+                        page.goto(SNAPCHAT_URL, wait_until="domcontentloaded", timeout=15000)
+                except Exception:
+                    pass
+            try:
+                page.wait_for_timeout(1000)
+            except PlaywrightError:
+                raise RuntimeError("Browser session closed while waiting for export URLs.")
 
         browser.close()
 
