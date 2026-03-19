@@ -5,6 +5,7 @@ import queue
 import shutil
 import threading
 import time
+import ctypes
 import urllib.request
 import urllib.parse
 import urllib.error
@@ -71,7 +72,13 @@ class DownloadStopSignal(Exception):
 
 
 def get_script_paths() -> AppPaths:
-    base_dir = Path(__file__).resolve().parent
+    # When running as a PyInstaller onefile EXE, `__file__` points inside the
+    # temporary extraction directory. We want output folders to be created
+    # next to the EXE (where the user launches it from).
+    if getattr(sys, "frozen", False):
+        base_dir = Path(sys.executable).resolve().parent
+    else:
+        base_dir = Path(__file__).resolve().parent
     downloads_dir = base_dir / "downloads"
     extracted_dir = base_dir / "extracted"
     media_dir = base_dir / "media"
@@ -153,6 +160,54 @@ def setup_sc_dark_theme(style: ttk.Style, root: tk.Tk) -> None:
     style.configure("Treeview.TScrollbar", background=bg_root)
 
 
+def configure_window_behavior(root: tk.Tk) -> None:
+    """Make the main window non-resizable and disable the maximize button (Windows).
+
+    Note: removing the maximize box is done via a best-effort Windows style tweak.
+    """
+    try:
+        root.resizable(False, False)
+    except Exception:
+        pass
+
+    # Only supported on Windows.
+    if sys.platform != "win32":
+        return
+
+    try:
+        # Ensure the window handle exists.
+        root.update_idletasks()
+        user32 = ctypes.windll.user32
+        hwnd = user32.GetParent(root.winfo_id()) or root.winfo_id()
+
+        # Win32 style constants.
+        GWL_STYLE = -16
+        WS_MAXIMIZEBOX = 0x00010000
+
+        # SetWindowPos flags.
+        SWP_NOSIZE = 0x0001
+        SWP_NOMOVE = 0x0002
+        SWP_NOZORDER = 0x0004
+        SWP_FRAMECHANGED = 0x0020
+
+        style = int(user32.GetWindowLongW(hwnd, GWL_STYLE))
+        new_style = style & ~WS_MAXIMIZEBOX
+        if new_style != style:
+            user32.SetWindowLongW(hwnd, GWL_STYLE, new_style)
+            user32.SetWindowPos(
+                hwnd,
+                0,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_FRAMECHANGED,
+            )
+    except Exception:
+        # If anything fails, we still keep the window non-resizable via Tk.
+        return
+
+
 def post_event(q: queue.Queue, event_type: str, **payload) -> None:
     q.put({"type": event_type, **payload})
 
@@ -197,6 +252,32 @@ def load_urls_file(urls_file: Path) -> list[str]:
     return urls
 
 
+def configure_playwright_browsers_path() -> None:
+    """Ensure Playwright can find Chromium browsers when bundled by PyInstaller.
+
+    When running from a onefile EXE, PyInstaller extracts the bundled files to
+    `sys._MEIPASS`. The build script can include Playwright browsers under a
+    `playwright-browsers/` folder; we point Playwright to it via
+    `PLAYWRIGHT_BROWSERS_PATH`.
+    """
+    if os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
+        return
+    if not getattr(sys, "frozen", False):
+        return
+
+    try:
+        meipass = getattr(sys, "_MEIPASS", None)
+        if not meipass:
+            return
+        base = Path(meipass)
+        candidate = base / "playwright-browsers"
+        if candidate.exists():
+            os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(candidate)
+    except Exception:
+        # Best-effort only; Playwright will fall back to its default paths.
+        return
+
+
 def fetch_snapchat_export_urls(
     urls_file: Path,
     min_urls: int = 5,
@@ -210,6 +291,7 @@ def fetch_snapchat_export_urls(
     If `write_urls_file` is True, also saves them to `urls_file` (one URL per line).
     Requires Playwright + Chromium.
     """
+    configure_playwright_browsers_path()
     try:
         from playwright.sync_api import sync_playwright  # type: ignore[import-not-found]
     except Exception:
@@ -543,6 +625,8 @@ def worker_main(
     q: queue.Queue,
 ) -> None:
     paths = get_script_paths()
+    # Ensure output directory tree exists in the current app location.
+    paths.base_dir.mkdir(parents=True, exist_ok=True)
     paths.downloads_dir.mkdir(parents=True, exist_ok=True)
     paths.extracted_dir.mkdir(parents=True, exist_ok=True)
     paths.media_dir.mkdir(parents=True, exist_ok=True)
@@ -689,6 +773,7 @@ class DownloaderUI:
 
         root.title("SC Memories Downloader (ZIP + Unzip + Media Collector)")
         root.geometry("920x620")
+        configure_window_behavior(root)
 
         # Ensure the main background is consistent even for non-ttk widgets.
         try:
