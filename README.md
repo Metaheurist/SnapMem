@@ -97,9 +97,9 @@ flowchart LR
 ```mermaid
 sequenceDiagram
   participant UI as UI
-  participant Browser as Browser (Playwright)
-  UI->>Browser: Open Snapchat "Download My Data"
-  Browser-->>UI: Export list visible (mydata~*.zip links)
+  participant Browser as Playwright browser
+  UI->>Browser: Open Snapchat Download My Data page
+  Browser-->>UI: Export list visible with mydata zip links
   UI->>UI: Enable Start / show ZIP list
   Note over UI,Browser: If export list isn't found, click "Refresh URLs"
   Note over UI,Browser: Re-auth and try again
