@@ -88,54 +88,16 @@ def setup_sc_dark_theme(style: ttk.Style, root: tk.Tk) -> None:
 
 
 def configure_window_behavior(root: tk.Tk) -> None:
-    """Make the main window non-resizable and disable the maximize button (Windows)."""
-    import ctypes
-    import sys
-
-    # Ensure the window handle exists.
-    try:
-        root.update_idletasks()
-        # Only supported on Windows.
-        if sys.platform != "win32":
-            root.resizable(False, False)
-            return
-
-        user32 = ctypes.windll.user32
-        hwnd = user32.GetParent(root.winfo_id()) or root.winfo_id()
-
-        # Win32 style constants.
-        GWL_STYLE = -16
-        WS_MAXIMIZEBOX = 0x00010000
-
-        # SetWindowPos flags.
-        SWP_NOSIZE = 0x0001
-        SWP_NOMOVE = 0x0002
-        SWP_NOZORDER = 0x0004
-        SWP_FRAMECHANGED = 0x0020
-
-        try:
-            style = int(user32.GetWindowLongW(hwnd, GWL_STYLE))
-            new_style = style & ~WS_MAXIMIZEBOX
-            if new_style != style:
-                user32.SetWindowLongW(hwnd, GWL_STYLE, new_style)
-                user32.SetWindowPos(
-                    hwnd,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_FRAMECHANGED,
-                )
-        except Exception:
-            # If anything fails, we still keep the window non-resizable via Tk.
-            pass
-    except Exception:
-        pass
-
+    """Apply safe, cross-platform Tk window behavior."""
     try:
         root.resizable(False, False)
+    except Exception:
+        pass
+    try:
+        # Guard against platform-specific style glitches producing a tiny/empty client area.
+        root.minsize(920, 620)
+        root.state("normal")
+        root.update_idletasks()
     except Exception:
         pass
 
