@@ -59,6 +59,13 @@ try {
 
 $collectAllArgs = @()
 
+# Build-time-only deps we should not bundle into the runtime EXE.
+# Keeping these out avoids unnecessary bloat and prevents PyInstaller from
+# importing unrelated modules during hook processing.
+$skipCollectAllPkgs = @(
+    "pyinstaller"
+)
+
 # Read requirement package names and apply --collect-all for each.
 # This helps PyInstaller bundle submodules and package data.
 Get-Content -LiteralPath $RequirementsFile | ForEach-Object {
@@ -74,6 +81,9 @@ Get-Content -LiteralPath $RequirementsFile | ForEach-Object {
     if ($line -match "^([A-Za-z0-9_.-]+)") {
         $pkg = $matches[1]
         if ($pkg) {
+            if ($skipCollectAllPkgs -contains $pkg.ToLower()) {
+                return
+            }
             $collectAllArgs += "--collect-all"
             $collectAllArgs += $pkg
         }
@@ -91,7 +101,12 @@ $pyinstallerArgs = @(
 )
 
 if ($Clean) {
-    $pyinstallerArgs += "--clean"
+    # Avoid PyInstaller's default cleanup of its cached work directory,
+    # which can fail with "Access is denied" when some files are locked.
+    # Using an isolated work path gives a reliable "clean build" effect.
+    $isolatedWorkPath = Join-Path $env:TEMP ("pyinstaller_work_" + [Guid]::NewGuid().ToString())
+    Write-Host "Using isolated PyInstaller work dir: $isolatedWorkPath"
+    $pyinstallerArgs += @("--workpath", $isolatedWorkPath)
 }
 
 # Bundle Playwright browsers so the EXE works without requiring `playwright install` on the target machine.

@@ -8,3 +8,9 @@ __pycache__/
 dist/
 build/
 *.spec
+
+# If/when we persist Playwright auth state for Snapchat,
+# these files must never be committed.
+*auth_state*.json
+*storage_state*.json
+*storageState*.json
