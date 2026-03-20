@@ -118,8 +118,7 @@ def worker_main(
             safe_extract_zip(zip_path, extract_to, stop_event, q, phase_prefix="Unzipping")
 
             post_event(q, "log", message=f"Collecting media from: {zip_name}")
-            media_subdir = paths.media_dir / zip_name.replace(".zip", "")
-            copy_media_from_tree(extract_to, media_subdir, stop_event, q, phase_text="Collecting media")
+            copy_media_from_tree(extract_to, paths.media_dir, stop_event, q, phase_text="Collecting media")
 
             post_event(q, "overall_progress", percent=50 + int(i * 50 / total) if total else 100)
 

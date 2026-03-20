@@ -1,7 +1,7 @@
 # SC Memories Downloader
 
 Downloader for Snapchat “Download My Data” exports:
-downloads the signed ZIPs, extracts them, and copies media files to a single `media/` folder.
+downloads the signed ZIPs, extracts them, and copies media files into one flat `media/` folder (no subfolders). If two files share the same name, extras are saved as `name_2.ext`, `name_3.ext`, and so on.
 
 ## App screenshot
 
@@ -24,6 +24,8 @@ downloads the signed ZIPs, extracts them, and copies media files to a single `me
 - URL refresh:
   - the app refreshes export URLs by default (requires Playwright login)
   - there is a `Refresh URLs` button in the UI for re-login / re-auth if needed
+- `Flatten media folder` button:
+  - if `media/` still has subfolders (e.g. from an older run), moves every file up into `media/` and removes empty directories; renames on name clashes like new downloads
 - Output folders created next to the app EXE (PyInstaller onefile):
   - `downloads/`, `extracted/`, `media/`
   - (when running as `.py`, folders are created next to `Downloader.py`)
@@ -68,7 +70,7 @@ python .\Downloader.py --skip-fetch-urls --urls-file .\urls.txt
 
 - `downloads/`: ZIP downloads (and `*.part` while downloading)
 - `extracted/`: extracted ZIP contents
-- `media/`: copied media files (images/videos) collected from the extracted data
+- `media/`: copied media files (images/videos) from all exports, **directly in this folder** (flat layout)
 
 ## Diagrams
 
@@ -78,7 +80,7 @@ python .\Downloader.py --skip-fetch-urls --urls-file .\urls.txt
 flowchart TD
   A["Refresh URLs via Playwright"] --> B["Stage 1 - Download all ZIP files in parallel"]
   B --> C["Stage 2 - Unzip each ZIP file sequentially"]
-  C --> D["Collect media files into media folder"]
+  C --> D["Collect media files into flat media/ (no subfolders)"]
   D --> E[Done]
 ```
 

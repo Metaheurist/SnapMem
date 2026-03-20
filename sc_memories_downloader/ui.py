@@ -9,6 +9,8 @@ from tkinter import ttk
 
 from .auth import fetch_snapchat_export_urls
 from .events import post_event
+from .media import flatten_media_directory
+from .paths import get_script_paths
 from .worker import worker_main
 from .urls import get_zip_filename_from_url
 
@@ -182,6 +184,9 @@ class DownloaderUI:
         self.clear_btn = ttk.Button(btns, text="Clear previous data", command=self.clear_previous_data)
         self.clear_btn.pack(side="left")
 
+        self.flatten_media_btn = ttk.Button(btns, text="Flatten media folder", command=self.flatten_media)
+        self.flatten_media_btn.pack(side="left", padx=(8, 0))
+
         self.refresh_btn = ttk.Button(btns, text="Refresh URLs", command=self.refresh_urls)
         self.refresh_btn.pack(side="left", padx=(8, 0))
 
@@ -323,6 +328,7 @@ class DownloaderUI:
             return
 
         self.clear_btn.config(state="disabled")
+        self.flatten_media_btn.config(state="disabled")
         self.progress_by_index = {i: 0.0 for i in range(1, len(self.urls) + 1)}
 
         # Per-download pause/stop signals.
@@ -393,6 +399,7 @@ class DownloaderUI:
         # Disable buttons while scraping to avoid concurrent operations.
         self.refresh_btn.config(state="disabled")
         self.clear_btn.config(state="disabled")
+        self.flatten_media_btn.config(state="disabled")
         self.start_btn.config(state="disabled")
         self.cancel_btn.config(state="disabled")
 
@@ -443,6 +450,31 @@ class DownloaderUI:
 
         self.log_line("Cleared previous data folders.")
 
+    def flatten_media(self) -> None:
+        if self.worker_thread and self.worker_thread.is_alive():
+            return
+
+        paths = get_script_paths()
+        paths.media_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            moved, err = flatten_media_directory(paths.media_dir)
+        except Exception as e:
+            self.log_line(f"Flatten media failed: {e}")
+            messagebox.showerror("Flatten media", str(e))
+            return
+
+        if err:
+            self.log_line(f"Flatten media: {err}")
+            messagebox.showinfo("Flatten media", err)
+            return
+
+        if moved == 0:
+            self.log_line("Flatten media: no files in subfolders (already flat or empty).")
+            messagebox.showinfo("Flatten media", "No files in subfolders — nothing to move.")
+        else:
+            self.log_line(f"Flatten media: moved {moved} file(s) into {paths.media_dir}")
+            messagebox.showinfo("Flatten media", f"Moved {moved} file(s) into the media folder.")
+
     def poll_queue(self) -> None:
         try:
             while True:
@@ -486,6 +518,9 @@ class DownloaderUI:
                     self.status_var.set("Done")
                     self.phase_var.set("Idle")
                     self.cancel_btn.config(state="disabled")
+                    self.clear_btn.config(state="normal")
+                    self.flatten_media_btn.config(state="normal")
+                    self.start_btn.config(state="normal")
                     msg = event.get("message", "Done.")
                     self.log_line(msg)
                 elif etype == "download_stopped":
@@ -504,6 +539,7 @@ class DownloaderUI:
                         self.phase_var.set("Idle")
                         self.refresh_btn.config(state="normal")
                         self.clear_btn.config(state="normal")
+                        self.flatten_media_btn.config(state="normal")
                         self.start_btn.config(state="disabled")
                         self.log_line("Refresh completed but no URLs were found.")
                     else:
@@ -513,6 +549,7 @@ class DownloaderUI:
                         self.phase_var.set("Idle")
                         self.refresh_btn.config(state="normal")
                         self.clear_btn.config(state="normal")
+                        self.flatten_media_btn.config(state="normal")
                         self.start_btn.config(state="normal")
                         self.log_line(f"Refreshed {len(urls)} URLs.")
                 elif etype == "urls_refresh_failed":
@@ -521,6 +558,7 @@ class DownloaderUI:
                     self.phase_var.set("Idle")
                     self.refresh_btn.config(state="normal")
                     self.clear_btn.config(state="normal")
+                    self.flatten_media_btn.config(state="normal")
                     self.start_btn.config(state="disabled")
                     self.log_line(f"URL refresh failed: {err}")
 
@@ -541,6 +579,7 @@ class DownloaderUI:
                     self.cancel_btn.config(state="disabled")
                     self.refresh_btn.config(state="normal")
                     self.clear_btn.config(state="normal")
+                    self.flatten_media_btn.config(state="normal")
                     self.start_btn.config(state="normal")
                     self.log_line(event.get("message", "Error"))
                 else:
