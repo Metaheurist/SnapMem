@@ -34,6 +34,55 @@ MEDIA_VIDEO_EXTS = {
 MEDIA_EXTS = MEDIA_IMAGE_EXTS | MEDIA_VIDEO_EXTS
 
 
+def unique_path_in_dir(directory: Path, filename: str) -> Path:
+    """Return directory / filename, or stem_2.ext, stem_3.ext, ... if that name is taken."""
+    candidate = directory / filename
+    if not candidate.exists():
+        return candidate
+    stem = Path(filename).stem
+    suffix = Path(filename).suffix
+    n = 2
+    while True:
+        cand = directory / f"{stem}_{n}{suffix}"
+        if not cand.exists():
+            return cand
+        n += 1
+
+
+def flatten_media_directory(media_dir: Path) -> tuple[int, str | None]:
+    """Move every file from subfolders of media_dir into media_dir (flat). Removes empty dirs."""
+    media_dir = media_dir.resolve()
+    if not media_dir.is_dir():
+        return 0, "Media folder does not exist."
+
+    # Files not directly under media_dir (any depth).
+    to_move = [p for p in media_dir.rglob("*") if p.is_file() and p.parent != media_dir]
+    if not to_move:
+        return 0, None
+
+    moved = 0
+    for src in sorted(to_move, key=lambda p: len(p.parts), reverse=True):
+        dst = unique_path_in_dir(media_dir, src.name)
+        shutil.move(str(src), str(dst))
+        moved += 1
+
+    # Remove empty directories under media_dir (deepest first).
+    dirs = sorted(
+        [p for p in media_dir.rglob("*") if p.is_dir()],
+        key=lambda p: len(p.parts),
+        reverse=True,
+    )
+    for d in dirs:
+        if d == media_dir:
+            continue
+        try:
+            d.rmdir()
+        except OSError:
+            pass
+
+    return moved, None
+
+
 def copy_media_from_tree(
     root_dir: Path,
     destination_dir: Path,
@@ -58,15 +107,13 @@ def copy_media_from_tree(
         post_event(q, "set_phase", text=phase_text)
         post_event(q, "current_progress", percent=percent)
 
-        rel = src.relative_to(root_dir)
-        dst = destination_dir / rel
-        dst.parent.mkdir(parents=True, exist_ok=True)
-
-        # Copy (not move) so the extracted folder still exists
-        # If a file exists and is identical size, skip to save time.
-        if dst.exists() and dst.stat().st_size == src.stat().st_size:
+        base = destination_dir / src.name
+        # Copy (not move) so the extracted folder still exists.
+        # If the natural filename already exists with identical size, skip to save time.
+        if base.exists() and base.stat().st_size == src.stat().st_size:
             continue
 
+        dst = unique_path_in_dir(destination_dir, src.name)
         shutil.copy2(src, dst)
         copied += 1
 
