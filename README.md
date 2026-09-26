@@ -1,125 +1,89 @@
 # SC Memories Downloader
 
-Downloader for Snapchat “Download My Data” exports:
-downloads the signed ZIPs, extracts them, and copies media files into one flat `media/` folder (no subfolders). If two files share the same name, extras are saved as `name_2.ext`, `name_3.ext`, and so on.
+Desktop app for Snapchat “Download My Data” exports. It opens the export page, collects the signed `mydata~*.zip` links, downloads the ZIPs, extracts them, and copies images and videos into one flat `media/` folder.
 
-## App screenshot
-
-![SC Memories Downloader app UI](docs/images/app-screenshot.png)
-
-## What’s included
-
-- Dark “SC-style” UI (gray + yellow)
-- Per-ZIP progress:
-  - `%` completed
-  - `MB` downloaded
-  - `MB/s` download rate
-- Per-ZIP controls (in the `Control` column):
-  - click left half: pause / resume (`||` / `>`)
-  - click right half: stop that ZIP only (`X`)
-- Resume interrupted downloads across runs:
-  - partial files are saved as `downloads/*.zip.part`
-  - resume uses HTTP `Range` and appends from the existing partial size
-  - resume is keyed by the ZIP filename, so it still works if the *signed* URL changes after refresh
-- URL refresh:
-  - the app refreshes export URLs by default (requires Playwright login)
-  - there is a `Refresh URLs` button in the UI for re-login / re-auth if needed
-- `Flatten media folder` button:
-  - if `media/` still has subfolders (e.g. from an older run), moves every file up into `media/` and removes empty directories; renames on name clashes like new downloads
-- Output folders created next to the app EXE (PyInstaller onefile):
-  - `downloads/`, `extracted/`, `media/`
-  - (when running as `.py`, folders are created next to `Downloader.py`)
+![SC Memories Downloader](docs/images/app-screenshot.png)
 
 ## Requirements
 
 - Python 3.x
-- Playwright (only needed if you want the app to refresh URLs automatically)
-- PyInstaller (only needed to build the Windows EXE)
-
-Install dependencies:
+- Playwright and Chromium, for refreshing export URLs
+- PyInstaller, only if you are building the Windows EXE
 
 ```powershell
-pip install playwright
+pip install -r requirements.txt
 python -m playwright install chromium
 ```
 
+`requirements.txt` lists `playwright` and `pyinstaller`. The build script installs Pillow itself when `icon.png` is present.
+
 ## Run
 
-Refresh URLs (default behavior):
+By default the app opens a browser on `https://accounts.snapchat.com/v2/download-my-data` and waits until it can see the export ZIP links. Log in there (MFA and captcha included). It tries Microsoft Edge first, then Chromium.
 
 ```powershell
 python .\Downloader.py
 ```
 
-If you already have `urls.txt` and want to skip the browser scraping step:
+If you already have `urls.txt` and do not want a browser session:
 
 ```powershell
 python .\Downloader.py --skip-fetch-urls --urls-file .\urls.txt
 ```
 
-### Optional flags
+`Downloader.py` only calls `sc_memories_downloader.main`.
 
-- `--skip-fetch-urls`: do not scrape export URLs
-- `--urls-file`: path to `urls.txt` (default: `urls.txt` next to the script)
-- `--min-urls`: minimum number of ZIP links to wait for when scraping
-- `--timeout-sec`: scraping timeout in seconds
-- `--write-urls-file`: save scraped URLs into `urls.txt`
-  - note: this contains signed export links, so keeping it is optional
+### Flags
 
-## Output folders
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--skip-fetch-urls` | off | Skip Playwright and load `urls.txt` |
+| `--urls-file` | `urls.txt` | File to read, and to write when `--write-urls-file` is set. Relative paths are next to the EXE, or next to the repo root when you run the script |
+| `--write-urls-file` | off | Save the scraped signed URLs into that file |
+| `--min-urls` | `5` | How many ZIP links to wait for while scraping |
+| `--timeout-sec` | `300` | How long to wait for those links |
+| `--fetch-urls` | — | Deprecated. Refresh already happens unless you pass `--skip-fetch-urls` |
 
-- `downloads/`: ZIP downloads (and `*.part` while downloading)
-- `extracted/`: extracted ZIP contents
-- `media/`: copied media files (images/videos) from all exports, **directly in this folder** (flat layout)
+`urls.txt` is one URL per line. Blank lines and lines starting with `#` are ignored.
 
-## Diagrams
+If the startup scrape fails, the window still opens and loads `urls.txt` when that file exists. Use **Refresh URLs** to log in again.
 
-### Download pipeline
+## Window
 
-```mermaid
-flowchart TD
-  A["Refresh URLs via Playwright"] --> B["Stage 1 - Download all ZIP files in parallel"]
-  B --> C["Stage 2 - Unzip each ZIP file sequentially"]
-  C --> D["Collect media files into flat media/ (no subfolders)"]
-  D --> E[Done]
-```
+- **Start** downloads every ZIP in parallel, then unzips them one at a time and copies media into `media/`.
+- **Cancel** stops the run.
+- **Refresh URLs** runs the browser login again.
+- **Flatten media folder** moves files out of any subfolders under `media/` and deletes the empty directories. Use this for a `media/` folder left by an older run.
+- **Clear previous data** deletes `downloads/`, `extracted/`, and `media/` after a confirmation. It does nothing while a run is in progress.
 
-### Resume behavior
+The ZIP list shows percent, megabytes, and MB/s. The Control column is not a real button: the left half pauses or resumes that ZIP, the right half stops that ZIP only.
 
-```mermaid
-flowchart LR
-  X[Previous run] --> Y[downloads/mydata~X.zip.part exists]
-  Y --> Z["Next run uses HTTP Range from existing part size"]
-  Z --> W[Append data until ZIP is complete]
-  W --> U[Rename to downloads/mydata~X.zip]
-```
+Partial downloads are `downloads/<zipname>.zip.part`. The next run sends an HTTP `Range` request from that file size and appends. The part file is matched by ZIP filename, so a new signed URL for the same export still resumes. If the server ignores `Range` and returns the full file, the download starts over.
 
-### Auth / re-login
+Name clashes in `media/` become `name_2.ext`, `name_3.ext`, and so on. A file is skipped when `media/` already has the same name and the same size. Copied types are jpg, jpeg, png, gif, bmp, webp, tif, tiff, heic, heif, svg, mp4, mov, mkv, avi, wmv, webm, mpeg, mpg, m4v, 3gp, and 3gpp.
 
-```mermaid
-sequenceDiagram
-  participant UI as UI
-  participant Browser as Playwright browser
-  UI->>Browser: Open Snapchat Download My Data page
-  Browser-->>UI: Export list visible with mydata zip links
-  UI->>UI: Enable Start / show ZIP list
-  Note over UI,Browser: If export list isn't found, click "Refresh URLs"
-  Note over UI,Browser: Re-auth and try again
-```
+## Folders
 
-## Privacy
+Created next to the EXE, or next to the repo root when you run `python .\Downloader.py`:
 
-The project does not embed signed ZIP URLs in code.
-Signed URLs are normally fetched at runtime and are not stored in `urls.txt` unless you use `--write-urls-file`.
+- `downloads/` — ZIP files, plus `*.part` while a download is in progress
+- `extracted/` — unzipped export contents
+- `media/` — images and videos, with no subfolders
 
-## Building a Windows EXE
+## Signed URLs
+
+The repo does not ship export links. They are scraped at runtime. `--write-urls-file` is the only switch that writes them to disk, and `urls.txt` is in `.gitignore`, along with `downloads/`, `extracted/`, `media/`, and `*.part`.
+
+Those links are signed and identify your export. Leave `--write-urls-file` off unless you need the file. Do not commit `urls.txt`. Playwright login state is not saved; `.gitignore` also blocks `*auth_state*.json` and storage-state files if that is added later.
+
+## Windows EXE
 
 ```powershell
 .\build_windows_exe.ps1 -Clean
 ```
 
-The script installs requirements, ensures Chromium is installed for Playwright, then runs PyInstaller and writes the EXE to `dist/`.
+The script installs `requirements.txt`, installs Playwright Chromium, and runs PyInstaller (`--onefile --windowed`). Output goes to `dist/`.
 
-If `icon.png` is present, the build also installs Pillow, runs `scripts/generate_icon_set.py` to refresh `assets/icons/`, and passes `assets/icons/app-icon.ico` to PyInstaller (`--icon`). The same behavior runs in GitHub Actions.
+When `icon.png` exists, it installs Pillow, runs `scripts/generate_icon_set.py`, and passes `assets/icons/app-icon.ico` to PyInstaller. If `%LOCALAPPDATA%\ms-playwright` exists, those browsers are bundled so the EXE can refresh URLs without a separate `playwright install` on the machine that runs it.
 
-
+Pushing to `main` or `master` runs `.github/workflows/build-windows-exe.yml`, which bumps `.github/build-version.txt` and publishes x64 and x86 builds.
