@@ -64,7 +64,7 @@ class RetryPolicy:
         if retry_after is not None:
             return min(max(retry_after, 0.0), self.max_retry_after)
         exp = min(self.max_delay, self.base_delay * (2 ** (attempt - 1)))
-        return random.uniform(exp / 2, exp)
+        return random.uniform(exp / 2, exp)  # nosec B311
 
 
 def parse_retry_after(value: str | None, now: float | None = None) -> float | None:

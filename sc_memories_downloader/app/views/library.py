@@ -126,15 +126,13 @@ class LibraryView:
         dt = r.datetime
         data = thumbnail(path) if r.kind != "video" else None
         if data is None:
-            inner = ft.Stack(
-                [
-                    ft.Container(bgcolor=t.CARD_HI, expand=True),
-                    ft.Container(t.icon("play" if r.kind == "video" else "library", 30, t.ACCENT if r.kind == "video" else t.MUTED), alignment=ft.Alignment.CENTER, expand=True),
-                ],
-                expand=True,
+            inner = ft.Container(
+                t.icon("play" if r.kind == "video" else "library", 30, t.ACCENT if r.kind == "video" else t.MUTED),
+                bgcolor=t.CARD_HI,
+                alignment=ft.Alignment.CENTER,
             )
         else:
-            inner = ft.Image(src=data, fit=ft.BoxFit.COVER, expand=True)
+            inner = ft.Image(src=data, fit=ft.BoxFit.COVER)
         label = ft.Container(
             content=ft.Text(f"{dt:%d %b %H:%M}", size=10, color=t.TEXT),
             bgcolor="#99000000",
@@ -144,7 +142,7 @@ class LibraryView:
             bottom=6,
         )
         return ft.Container(
-            content=ft.Stack([inner, label], expand=True),
+            content=ft.Stack([inner, label], fit=ft.StackFit.EXPAND),
             border_radius=ft.BorderRadius.all(10),
             clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
             tooltip=f"{r.kind.title()} - {dt:%Y-%m-%d %H:%M:%S} UTC",

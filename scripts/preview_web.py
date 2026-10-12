@@ -25,6 +25,7 @@ def main() -> None:
     p.add_argument("--view", default="connect", choices=["connect", "downloads", "library", "settings"])
     p.add_argument("--output-dir", help="Output folder (default: a new temp folder)")
     p.add_argument("--count", type=int, default=24, help="Number of sample Memories")
+    p.add_argument("--step-days", type=int, default=23, help="Days between sample Memories")
     p.add_argument("--no-sample", action="store_true", help="Start without importing the sample export")
     args = p.parse_args()
 
@@ -33,7 +34,7 @@ def main() -> None:
     os.environ.setdefault("SNAPMEM_HOME", str(out / "_home"))
     imports = []
     if not args.no_sample:
-        imports.append(build_sample_export(out / "_sample", count=args.count))
+        imports.append(build_sample_export(out / "_sample", count=args.count, step_days=args.step_days))
     print(f"Output folder: {out}")
     opts = StartupOptions(import_paths=imports, output_dir=str(out), view=args.view)
     run_app(opts, web_port=args.port)

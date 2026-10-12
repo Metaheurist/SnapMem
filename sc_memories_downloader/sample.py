@@ -31,7 +31,7 @@ def _mp4_bytes() -> bytes:
     return b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom" + b"\x00" * 64
 
 
-def build_sample_export(out_dir: Path, count: int = 12, start: datetime | None = None, name: str = "mydata~sample.zip") -> Path:
+def build_sample_export(out_dir: Path, count: int = 12, start: datetime | None = None, name: str = "mydata~sample.zip", step_days: int = 23) -> Path:
     """Write a ZIP shaped like a Snapchat export and return its path."""
     out_dir.mkdir(parents=True, exist_ok=True)
     start = start or datetime(2023, 1, 14, 9, 30, 0, tzinfo=timezone.utc)
@@ -39,7 +39,7 @@ def build_sample_export(out_dir: Path, count: int = 12, start: datetime | None =
     saved_media = []
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for i in range(count):
-            dt = start + timedelta(days=i * 23, hours=i * 3, minutes=i * 7)
+            dt = start + timedelta(days=i * step_days, hours=i * 3, minutes=i * 7)
             mid = str(uuid.UUID(int=i + 1))
             is_video = i % 4 == 3
             ext = ".mp4" if is_video else ".jpg"

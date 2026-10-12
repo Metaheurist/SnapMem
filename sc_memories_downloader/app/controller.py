@@ -348,7 +348,7 @@ class AppController:
         elif not target.exists():
             return
         if sys.platform == "win32":
-            os.startfile(str(target))  # nosec B606 - opens a local folder chosen by the app
+            os.startfile(str(target))  # nosec B606
         elif sys.platform == "darwin":
             subprocess.Popen(["open", str(target)])  # nosec B603 B607
         else:

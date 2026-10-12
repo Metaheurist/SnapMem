@@ -56,7 +56,7 @@ class SnapMemApp:
             bgcolor=t.SURFACE,
             indicator_color="#33FFFC00",
             leading=ft.Container(t.logo(40), padding=ft.Padding.only(top=20, bottom=16)),
-            trailing=ft.Container(t.muted(f"v{__version__}", size=11), padding=ft.Padding.only(top=24)),
+            trailing=ft.Container(t.muted(f"v{__version__}" if __version__[:1].isdigit() else "dev build", size=11), padding=ft.Padding.only(top=24)),
             destinations=[
                 ft.NavigationRailDestination(icon=t.icon(ic, 22, t.MUTED), selected_icon=t.icon(ic, 22, t.ACCENT), label=label)
                 for _, label, ic in NAV

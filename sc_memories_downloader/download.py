@@ -120,7 +120,8 @@ def request_with_retry(
             req = make_request()
             if req.type != "https" and not _allow_http(req.host):
                 raise DownloadFailed(f"{label}: refusing non-https URL")
-            return urllib.request.urlopen(req, timeout=timeout)  # nosec B310 - scheme checked above
+            # Scheme is checked above: https only, plain http for loopback test servers.
+            return urllib.request.urlopen(req, timeout=timeout)  # nosec B310
         except urllib.error.HTTPError as e:
             if e.code in EXPIRED_STATUS:
                 raise LinkExpiredError(e.code) from None

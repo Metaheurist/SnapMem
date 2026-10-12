@@ -153,7 +153,8 @@ def fetch_snapchat_export_urls(
                     log(f"Found {len(urls)} export link(s)...")
                 if len(urls) >= min_urls or (urls and now - last_growth >= LINKS_STABLE_SEC):
                     break
-                if not urls and now - last_reload >= 30 and not page.is_closed():
+                # Reload only on the export page itself, never while the user is on the login form.
+                if not urls and now - last_reload >= 30 and not page.is_closed() and page.url.split("?", 1)[0].rstrip("/") == SNAPCHAT_DMD_URL.rstrip("/"):
                     last_reload = now
                     try:
                         page.goto(SNAPCHAT_DMD_URL, wait_until="domcontentloaded", timeout=15000)
