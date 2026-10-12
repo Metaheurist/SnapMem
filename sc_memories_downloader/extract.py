@@ -2,7 +2,7 @@ import queue
 import shutil
 import threading
 import zipfile
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from .events import EventThrottle, post_event
 
@@ -41,7 +41,7 @@ def safe_extract_zip(
 
             name = m.filename.replace("\\", "/")
             target = (base / name).resolve()
-            if not name or not is_within(base, target) or (target == base and not m.is_dir()):
+            if not name or PureWindowsPath(name).drive or not is_within(base, target) or (target == base and not m.is_dir()):
                 post_event(q, "log", message=f"Skipped unsafe path in {zip_path.name}: {m.filename}")
                 continue
 
