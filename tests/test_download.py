@@ -131,6 +131,21 @@ def test_refuses_plain_http_to_remote_hosts(tmp_path, fast_policy):
         download_with_progress("http://example.invalid/x.zip", tmp_path / "x.zip", stop_event=threading.Event(), q=queue.Queue(), policy=fast_policy)
 
 
+@pytest.mark.parametrize("target", ["http://example.invalid/x.zip", "ftp://127.0.0.1/x.zip"])
+def test_refuses_redirect_off_https(server, tmp_path, fast_policy, target):
+    route = server.add("/f.bin", body=BODY, fail_with=[302], fail_headers={"Location": target})
+    with pytest.raises(DownloadFailed, match="redirect to a non-https URL"):
+        _get(server, "/f.bin", tmp_path / "f.bin", fast_policy)
+    assert len(route.hits) == 1
+
+
+def test_follows_redirect_to_allowed_url(server, tmp_path, fast_policy):
+    server.add("/f.bin", body=BODY, fail_with=[302], fail_headers={"Location": "/f.bin"})
+    result, _ = _get(server, "/f.bin", tmp_path / "f.bin", fast_policy)
+    assert result == "downloaded"
+    assert (tmp_path / "f.bin").read_bytes() == BODY
+
+
 def test_invalid_zip_is_rejected(server, tmp_path, fast_policy):
     server.add("/mydata~1.zip", body=b"<html>not a zip</html>")
     with pytest.raises(DownloadFailed, match="not a valid ZIP"):

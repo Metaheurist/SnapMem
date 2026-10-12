@@ -7,7 +7,7 @@ from .. import theme as t
 STEPS = [
     'On Snapchat\'s "Download My Data" page, request an export with "Export your Memories" and "Export JSON Files" turned on.',
     "When Snapchat emails you that it is ready, sign in here. A browser window opens; finish the login there.",
-    "SnapMem picks up the export links by itself. Snapchat's links expire after about 7 days.",
+    "SnapMem picks up the export links by itself. Snapchat's exports expire after a few days.",
 ]
 
 

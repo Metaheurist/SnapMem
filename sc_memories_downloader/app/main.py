@@ -112,6 +112,7 @@ def run_app(opts: StartupOptions, web_port: int | None = None) -> None:
         SnapMemApp(page, opts).mount()
 
     if web_port:
-        ft.run(main, assets_dir=t.assets_dir(), view=ft.AppView.WEB_BROWSER, port=web_port)
+        # Flet's default host binds every interface; the UI can delete files, so keep it on loopback.
+        ft.run(main, assets_dir=t.assets_dir(), view=ft.AppView.WEB_BROWSER, port=web_port, host="127.0.0.1")
     else:
         ft.run(main, assets_dir=t.assets_dir())

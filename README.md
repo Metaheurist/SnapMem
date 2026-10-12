@@ -46,7 +46,7 @@ python .\Downloader.py
 
 The Connect page has two ways in. Both can be used together.
 
-**Sign in.** Request an export on Snapchat's "Download My Data" page with "Export your Memories" and "Export JSON Files" turned on. When the email arrives, press **Sign in and find exports**. Playwright opens `https://accounts.snapchat.com/v2/download-my-data` in Microsoft Edge, or the bundled Chromium if Edge is missing. Finish the login there, including MFA and captchas. The app watches the page for `mydata~*.zip` links on `storage.googleapis.com` and closes the window once it has `--min-urls` links, or when it has found at least one and the list has not grown for 10 seconds. While you are on the export page and no links are visible yet, the page is reloaded every 30 seconds. Snapchat's export links stop working after about 7 days.
+**Sign in.** Request an export on Snapchat's "Download My Data" page with "Export your Memories" and "Export JSON Files" turned on. When the email arrives, press **Sign in and find exports**. Playwright opens `https://accounts.snapchat.com/v2/download-my-data` in Microsoft Edge, or the bundled Chromium if Edge is missing. Finish the login there, including MFA and captchas. The app watches the page for `mydata~*.zip` links on `storage.googleapis.com` and closes the window once it has `--min-urls` links, or when it has found at least one and the list has not grown for 10 seconds. While you are on the export page and no links are visible yet, the page is reloaded every 30 seconds. Exports expire after a few days; the export page shows how long each one is available.
 
 **Keep me signed in** is off by default. When on, the browser session is kept in `%LOCALAPPDATA%\SnapMem\browser-profile` so the next sign-in can skip the login. Other programs running as your Windows user can read that folder. **Sign out** deletes it.
 
@@ -80,7 +80,7 @@ Snapchat does not publish rate limits. `sc_memories_downloader/ratelimit.py` and
 - An optional speed limit in MB/s is shared by all downloads (0 = unlimited).
 - HTTP 408, 425, 429, 500, 502, 503 and 504, timeouts and dropped connections are tried up to 5 times in total, with jittered exponential backoff (1 s doubling to 60 s). A `Retry-After` header, in seconds or as a date, is used instead when present, capped at 120 s.
 - HTTP 401, 403 and 410 mean the link has expired. The partial file is kept and the item is marked "Link expired". After 5 expired Memories in a row the rest are skipped and the app asks you to sign in again; finished files are kept.
-- Every request has a 30 second timeout. Only `https` URLs are fetched; plain `http` is allowed for `127.0.0.1`/`localhost` so the tests can use a local server.
+- Every request has a 30 second timeout. Only `https` URLs are fetched, and redirects to anything else are refused; plain `http` is allowed for `127.0.0.1`/`localhost` so the tests can use a local server.
 
 ## Library
 
@@ -163,7 +163,7 @@ The script installs `requirements-dev.txt`, writes the version to `sc_memories_d
 | Benchmarking | `benchmarks.yml` | push to `master`, pull requests | pytest-benchmark for extract, organize, library loading and the rate limiter; pull requests are compared against `master` in the job summary |
 | Security - Code Scanning | `security-codeql.yml` | push, pull requests, weekly | CodeQL `security-extended` for Python and GitHub Actions |
 | Security - CVE Scanning | `security-cve-scanning.yml` | push, pull requests, daily | pip-audit on both requirements files, OSV-Scanner (SARIF to code scanning), dependency review on pull requests |
-| Security - SAST and Secrets | `security-sast-secrets.yml` | push, pull requests, weekly | Bandit (SARIF to code scanning, fails on high severity) and Gitleaks over the full history |
+| Security - SAST and Secrets | `security-sast-secrets.yml` | push, pull requests, weekly | Bandit (SARIF to code scanning, fails on high severity) and Gitleaks (new commits on push and pull requests, the full history on the weekly run) |
 | Security - OpenSSF Scorecard | `security-scorecard.yml` | push to `master`, weekly | Scorecard, published and uploaded to code scanning |
 | Build and Release - Windows EXE | `release-build-windows.yml` | push to `master`, pull requests | Builds and self-tests the EXE. On `master` it also bumps `.github/build-version.txt` and publishes the EXE, a CycloneDX SBOM and `SHA256SUMS.txt` as a GitHub release |
 

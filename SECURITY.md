@@ -10,7 +10,7 @@ Only the latest release is fixed. Older EXEs are not patched.
 
 - **Signed links.** Export ZIP links and `memories_history.json` download links identify your Snapchat account. They are kept in memory, written to `urls.txt` only when you turn that on, and replaced with `<redacted>` in the activity log and error messages (`sc_memories_downloader/urls.py`).
 - **Browser session.** "Keep me signed in" stores the Playwright browser profile in `%LOCALAPPDATA%\SnapMem\browser-profile`. It is off by default. The folder is not encrypted by the app, so other programs running as the same Windows user can read it. "Sign out" deletes it.
-- **Network.** Only `https` URLs are fetched (plain `http` only for loopback addresses, used by the tests). Export links are accepted only from `storage.googleapis.com` with a `mydata~*.zip` file name, and Memory links only from `snapchat.com` and its subdomains.
+- **Network.** Only `https` URLs are fetched, including after redirects (plain `http` only for loopback addresses, used by the tests). The `scripts/preview_web.py` UI server listens on `127.0.0.1` only. Export links are accepted only from `storage.googleapis.com` with a `mydata~*.zip` file name, and Memory links only from `snapchat.com` and its subdomains.
 - **ZIP files.** Extraction skips entries that would be written outside the target folder (`..`, absolute paths, drive letters) and streams each file instead of loading it into memory (`sc_memories_downloader/extract.py`).
 - **Local files.** Settings live in `%LOCALAPPDATA%\SnapMem\settings.json`. Downloads, extracted files and the library live in the output folder you choose. Nothing is uploaded anywhere.
 

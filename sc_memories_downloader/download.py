@@ -4,6 +4,7 @@ import socket
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 from dataclasses import dataclass, field
@@ -75,6 +76,23 @@ def _allow_http(host: str) -> bool:
     return hostname in {"127.0.0.1", "localhost", "::1"}
 
 
+def _scheme_allowed(scheme: str, host: str) -> bool:
+    return scheme == "https" or (scheme == "http" and _allow_http(host))
+
+
+class _HttpsOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """urllib follows redirects to http/ftp by default; signed links must never leave https."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        parsed = urllib.parse.urlparse(newurl)
+        if not _scheme_allowed(parsed.scheme, parsed.netloc):
+            raise DownloadFailed(f"refusing redirect to a non-https URL ({parsed.scheme or 'no scheme'})")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_OPENER = urllib.request.build_opener(_HttpsOnlyRedirectHandler)
+
+
 def interruptible_sleep(seconds: float, stop_event: threading.Event, item: ItemControl | None = None) -> None:
     deadline = time.monotonic() + seconds
     while True:
@@ -118,10 +136,10 @@ def request_with_retry(
             limiter.before_request()
         try:
             req = make_request()
-            if req.type != "https" and not _allow_http(req.host):
+            if not _scheme_allowed(req.type, req.host):
                 raise DownloadFailed(f"{label}: refusing non-https URL")
-            # Scheme is checked above: https only, plain http for loopback test servers.
-            return urllib.request.urlopen(req, timeout=timeout)  # nosec B310
+            # Scheme is checked above and on every redirect: https only, plain http for loopback test servers.
+            return _OPENER.open(req, timeout=timeout)  # nosec B310
         except urllib.error.HTTPError as e:
             if e.code in EXPIRED_STATUS:
                 raise LinkExpiredError(e.code) from None
