@@ -19,7 +19,7 @@ jobs:
       version: ${{ steps.bump.outputs.version }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -82,10 +82,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python (${{ matrix.py_arch }})
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           architecture: ${{ matrix.py_arch }}
@@ -99,7 +99,7 @@ jobs:
           ./build_windows_exe.ps1 -OutputName $outputName -Clean
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: SC-Memories-Downloader-${{ needs.bump-version.outputs.version }}-${{ matrix.arch }}
           path: |
@@ -114,13 +114,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download x64 artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: SC-Memories-Downloader-${{ needs.bump-version.outputs.version }}-x64
           path: release-assets
 
       - name: Download x86 artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: SC-Memories-Downloader-${{ needs.bump-version.outputs.version }}-x86
           path: release-assets
