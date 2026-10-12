@@ -1,9 +1,18 @@
 import queue
+import shutil
 import threading
 import zipfile
 from pathlib import Path
 
-from .events import post_event
+from .events import EventThrottle, post_event
+
+
+def is_within(base: Path, target: Path) -> bool:
+    try:
+        target.relative_to(base)
+        return True
+    except ValueError:
+        return False
 
 
 def safe_extract_zip(
@@ -11,44 +20,44 @@ def safe_extract_zip(
     extract_to: Path,
     stop_event: threading.Event,
     q: queue.Queue,
-    phase_prefix: str,
-) -> None:
+    item_id: str | None = None,
+    throttle: EventThrottle | None = None,
+) -> int:
+    """
+    Extract `zip_path` into `extract_to`, skipping any entry that would land outside it
+    (absolute paths, `..`, drive letters). Returns the number of files written.
+    """
+    throttle = throttle or EventThrottle(0.25)
     extract_to.mkdir(parents=True, exist_ok=True)
+    base = extract_to.resolve()
+    written = 0
+
     with zipfile.ZipFile(zip_path, "r") as zf:
         members = zf.infolist()
-        total = len(members)
-
-        # Normalize for “zip slip” protection
-        base_resolved = extract_to.resolve()
-
+        total = len(members) or 1
         for idx, m in enumerate(members, start=1):
             if stop_event.is_set():
                 raise RuntimeError("Cancelled")
 
-            # Skip weird entries safely
-            name = m.filename
-            if not name or name.endswith("/"):
-                # Directory entry
-                target = (extract_to / name).resolve() if name else extract_to.resolve()
-                if str(target).startswith(str(base_resolved)):
-                    target.mkdir(parents=True, exist_ok=True)
+            name = m.filename.replace("\\", "/")
+            target = (base / name).resolve()
+            if not name or not is_within(base, target) or (target == base and not m.is_dir()):
+                post_event(q, "log", message=f"Skipped unsafe path in {zip_path.name}: {m.filename}")
                 continue
 
-            target = (extract_to / name).resolve()
-            if not str(target).startswith(str(base_resolved)):
-                post_event(q, "log", message=f"Skipped unsafe path in zip: {name}")
+            if m.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
                 continue
 
-            # Update progress
-            percent = int(idx * 100 / total) if total else 100
-            post_event(q, "current_progress", percent=percent)
-
-            # Ensure parent dir exists
             target.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(m) as src, open(target, "wb") as dst:
+                shutil.copyfileobj(src, dst, length=1024 * 1024)
+            written += 1
 
-            # Extract safely (we validated target is within base_resolved)
-            zf.extract(m, path=str(extract_to))
+            if item_id and throttle.ready(item_id):
+                post_event(q, "item_progress", id=item_id, percent=int(idx * 100 / total))
 
-    post_event(q, "current_progress", percent=100)
-    post_event(q, "log", message=f"Extracted: {zip_path.name}")
-
+    if item_id:
+        post_event(q, "item_progress", id=item_id, percent=100)
+    post_event(q, "log", message=f"Extracted {written} files from {zip_path.name}")
+    return written

@@ -1,159 +1,77 @@
 param(
     [string]$EntryScript = "Downloader.py",
-    [string]$RequirementsFile = "requirements.txt",
-    [string]$OutputName = "SC Memories Downloader",
-    [switch]$Clean
+    [string]$OutputName = "SnapMem",
+    [string]$Version = "",
+    [switch]$NoBrowser,
+    [switch]$SkipInstall
 )
 
-$ErrorActionPreference = "Stop"
+# Builds dist\<OutputName>.exe with `flet pack` (PyInstaller, one file, no console).
+#   -Version 1.2.3   writes sc_memories_downloader\_version.py and the EXE file version
+#   -NoBrowser       skips bundling Playwright Chromium (sign-in then needs Edge or a local install)
+#   -SkipInstall     uses the packages already installed in the current Python
 
+# flet and PyInstaller log to stderr; failures are caught through $LASTEXITCODE instead.
+$ErrorActionPreference = "Continue"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $scriptDir
 
-Write-Host "== Build Windows EXE =="
-Write-Host "Script dir: $scriptDir"
+Write-Host "== Build SnapMem EXE =="
 
-if (-not (Test-Path -LiteralPath $RequirementsFile)) {
-    Write-Host "requirements file not found: $RequirementsFile" -ForegroundColor Yellow
-    Write-Host "Create it first or edit this script to point at the correct file." -ForegroundColor Yellow
-    exit 1
+if (-not $SkipInstall) {
+    python -m pip install --upgrade pip
+    python -m pip install -r requirements-dev.txt
+    if ($LASTEXITCODE -ne 0) { throw "pip install failed" }
 }
 
-Write-Host "Installing requirements from $RequirementsFile..."
-python -m pip install --upgrade pip
-python -m pip install -r $RequirementsFile
-
-# If Playwright is part of the requirements, ensure the bundled browser is installed.
-$hasPlaywright = $false
-try {
-    $reqLines = Get-Content -LiteralPath $RequirementsFile
-    foreach ($l in $reqLines) {
-        $line = $l.Trim()
-        if ($line -eq "" -or $line.StartsWith("#")) { continue }
-        if ($line -match "^(playwright)(\s|$|[=<>!~])") {
-            $hasPlaywright = $true
-            break
-        }
-    }
-} catch {
-    $hasPlaywright = $false
+$versionFile = Join-Path $scriptDir "sc_memories_downloader\_version.py"
+if ($Version) {
+    $clean = $Version.TrimStart("v")
+    Set-Content -LiteralPath $versionFile -Value "__version__ = `"$clean`"" -Encoding utf8
+} else {
+    $clean = "0.0.0"
 }
+$parts = @($clean.Split(".") | ForEach-Object { if ($_ -match "^\d+$") { $_ } else { "0" } })
+while ($parts.Count -lt 4) { $parts += "0" }
+$fileVersion = ($parts[0..3] -join ".")
 
-if ($hasPlaywright) {
-    Write-Host "Installing Playwright browser (chromium)..."
-    try {
-        python -m playwright install chromium
-    } catch {
-        Write-Host "Warning: Playwright browser install failed. You may need to run: python -m playwright install chromium" -ForegroundColor Yellow
-    }
-}
-
-$playwrightBrowsersPath = $null
-try {
-    if ($env:LOCALAPPDATA) {
-        $playwrightBrowsersPath = Join-Path $env:LOCALAPPDATA "ms-playwright"
-    }
-} catch {
-    $playwrightBrowsersPath = $null
-}
-
-$collectAllArgs = @()
-
-# Build-time-only deps we should not bundle into the runtime EXE.
-# Keeping these out avoids unnecessary bloat and prevents PyInstaller from
-# importing unrelated modules during hook processing.
-$skipCollectAllPkgs = @(
-    "pyinstaller"
+$packArgs = @(
+    "pack", $EntryScript,
+    "--name", $OutputName,
+    "--icon", "assets\icons\app-icon.ico",
+    "--add-data", "assets\svg:assets\svg",
+    "--add-data", "assets\icons:assets\icons",
+    "--product-name", "SnapMem",
+    "--file-description", "SnapMem - Snapchat Memories downloader",
+    "--product-version", $clean,
+    "--file-version", $fileVersion,
+    "--copyright", "SnapMem contributors",
+    "-y"
 )
 
-# Read requirement package names and apply --collect-all for each.
-# This helps PyInstaller bundle submodules and package data.
-Get-Content -LiteralPath $RequirementsFile | ForEach-Object {
-    $line = $_.Trim()
-    if ($line -eq "" -or $line.StartsWith("#")) { return }
-    if ($line.StartsWith("-r") -or $line.StartsWith("--")) { return }
-
-    # Extract the package name before version/operator/extras.
-    # Examples:
-    #   playwright==1.40.0  -> playwright
-    #   pillow>=10          -> pillow
-    #   requests[socks]    -> requests
-    if ($line -match "^([A-Za-z0-9_.-]+)") {
-        $pkg = $matches[1]
-        if ($pkg) {
-            if ($skipCollectAllPkgs -contains $pkg.ToLower()) {
-                return
-            }
-            $collectAllArgs += "--collect-all"
-            $collectAllArgs += $pkg
-        }
-    }
+if (-not $NoBrowser) {
+    python -m playwright install chromium
+    if ($LASTEXITCODE -ne 0) { throw "playwright install chromium failed" }
+    $dry = python -m playwright install --dry-run chromium | Out-String
+    $match = [regex]::Match($dry, "Install location:\s+(\S*[\\/]chromium-\d+)")
+    if (-not $match.Success) { throw "Could not find the Playwright Chromium folder in: $dry" }
+    $chromium = $match.Groups[1].Value
+    $leaf = Split-Path -Leaf $chromium
+    Write-Host "Bundling $chromium"
+    $packArgs += @("--add-data", "${chromium}:playwright-browsers\$leaf")
 }
 
-$distDir = Join-Path $scriptDir "dist"
+Write-Host "flet $($packArgs -join ' ')"
+flet @packArgs
+if ($LASTEXITCODE -ne 0) { throw "flet pack failed" }
 
-$pyinstallerArgs = @(
-    "--noconfirm"
-    "--onefile"
-    "--windowed"
-    "--name"
-    $OutputName
-)
+$exe = Join-Path $scriptDir "dist\$OutputName.exe"
+if (-not (Test-Path -LiteralPath $exe)) { throw "Expected $exe" }
 
-if ($Clean) {
-    # Avoid PyInstaller's default cleanup of its cached work directory,
-    # which can fail with "Access is denied" when some files are locked.
-    # Using an isolated work path gives a reliable "clean build" effect.
-    $isolatedWorkPath = Join-Path $env:TEMP ("pyinstaller_work_" + [Guid]::NewGuid().ToString())
-    Write-Host "Using isolated PyInstaller work dir: $isolatedWorkPath"
-    $pyinstallerArgs += @("--workpath", $isolatedWorkPath)
-}
+Write-Host "Running self-test..."
+$report = Join-Path $scriptDir "dist\self-test.txt"
+$proc = Start-Process -FilePath $exe -ArgumentList "--self-test", "--self-test-report", $report -Wait -PassThru
+Get-Content -LiteralPath $report -ErrorAction SilentlyContinue
+if ($proc.ExitCode -ne 0) { throw "Self-test failed (exit $($proc.ExitCode))" }
 
-# App icon: generate ICO/PNGs from icon.png (GitHub Actions + local builds), then pass to PyInstaller.
-$iconSrc = Join-Path $scriptDir "icon.png"
-$iconGen = Join-Path $scriptDir "scripts\generate_icon_set.py"
-$iconIco = Join-Path $scriptDir "assets\icons\app-icon.ico"
-$iconOutDir = Join-Path $scriptDir "assets\icons"
-if (Test-Path -LiteralPath $iconSrc) {
-    if (Test-Path -LiteralPath $iconGen) {
-        Write-Host "Generating app icon set from icon.png..."
-        try {
-            python -m pip install pillow
-            python $iconGen --input $iconSrc --out-dir $iconOutDir
-        } catch {
-            Write-Host "Warning: icon generation failed (EXE will use default icon): $_" -ForegroundColor Yellow
-        }
-    }
-}
-if (Test-Path -LiteralPath $iconIco) {
-    $pyinstallerArgs += @("--icon", $iconIco)
-    Write-Host "Using PyInstaller --icon $iconIco"
-} else {
-    Write-Host "No app-icon.ico found at $iconIco; building without custom icon." -ForegroundColor Yellow
-}
-
-# Bundle Playwright browsers so the EXE works without requiring `playwright install` on the target machine.
-# Playwright uses the PLAYWRIGHT_BROWSERS_PATH env var when present.
-if ($playwrightBrowsersPath -and (Test-Path -LiteralPath $playwrightBrowsersPath)) {
-    Write-Host "Bundling Playwright browsers from: $playwrightBrowsersPath"
-    $pyinstallerArgs += @("--add-data", "$playwrightBrowsersPath;playwright-browsers")
-} else {
-    Write-Host "Playwright browsers folder not found; EXE may require running `python -m playwright install chromium` on the target machine." -ForegroundColor Yellow
-}
-
-# Make sure we build from the entry script name.
-$pyinstallerArgs += $collectAllArgs
-$pyinstallerArgs += $EntryScript
-
-Write-Host "Running PyInstaller..."
-Write-Host "pyinstaller $($pyinstallerArgs -join ' ')"
-
-# Use python -m pyinstaller to avoid PATH issues.
-python -m PyInstaller @pyinstallerArgs
-
-Write-Host ""
-Write-Host "Build finished."
-if (Test-Path -LiteralPath $distDir) {
-    Write-Host "Output should be under: $distDir" -ForegroundColor Green
-}
-
+Write-Host "Built $exe" -ForegroundColor Green

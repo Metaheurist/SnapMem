@@ -1,12 +1,33 @@
+import http.client
 import queue
+import socket
 import threading
 import time
 import urllib.error
 import urllib.request
 import zipfile
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
-from .events import post_event
+from .events import EventThrottle, post_event
+from .ratelimit import RateLimiter, RetryPolicy, parse_retry_after
+from .urls import redact_text
+
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) SnapMem"
+CHUNK_SIZE = 256 * 1024
+DEFAULT_TIMEOUT = 30.0
+
+TRANSIENT_STATUS = {408, 425, 429, 500, 502, 503, 504}
+EXPIRED_STATUS = {401, 403, 410}
+TRANSIENT_ERRORS = (
+    urllib.error.URLError,
+    ConnectionError,
+    TimeoutError,
+    socket.timeout,
+    http.client.IncompleteRead,
+    http.client.RemoteDisconnected,
+)
 
 
 class DownloadStopSignal(Exception):
@@ -15,174 +36,251 @@ class DownloadStopSignal(Exception):
         self.reason = reason
 
 
+class LinkExpiredError(Exception):
+    def __init__(self, status: int) -> None:
+        super().__init__(f"Link expired or no longer authorised (HTTP {status}). Refresh the export links.")
+        self.status = status
+
+
+class DownloadFailed(Exception):
+    pass
+
+
+@dataclass
+class ItemControl:
+    """Per-item pause/stop flags shared between the UI and one download thread."""
+
+    paused: threading.Event = field(default_factory=threading.Event)
+    stopped: threading.Event = field(default_factory=threading.Event)
+
+
+def check_stop(stop_event: threading.Event, item: ItemControl | None = None) -> None:
+    if stop_event.is_set():
+        raise DownloadStopSignal("cancel_all")
+    if item is None:
+        return
+    if item.stopped.is_set():
+        raise DownloadStopSignal("stop_item")
+    while item.paused.is_set():
+        if stop_event.is_set():
+            raise DownloadStopSignal("cancel_all")
+        if item.stopped.is_set():
+            raise DownloadStopSignal("stop_item")
+        time.sleep(0.25)
+
+
+def _allow_http(host: str) -> bool:
+    """Plain http is only accepted for loopback (local test servers)."""
+    hostname = (host or "").rsplit(":", 1)[0].strip("[]").lower()
+    return hostname in {"127.0.0.1", "localhost", "::1"}
+
+
+def interruptible_sleep(seconds: float, stop_event: threading.Event, item: ItemControl | None = None) -> None:
+    deadline = time.monotonic() + seconds
+    while True:
+        check_stop(stop_event, item)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        stop_event.wait(timeout=min(0.25, remaining))
+
+
+def zip_is_readable(path: Path) -> bool:
+    """Opens only the central directory, so it stays fast on multi-GB ZIPs."""
+    try:
+        with zipfile.ZipFile(path, "r") as zf:
+            return bool(zf.infolist())
+    except (OSError, zipfile.BadZipFile, ValueError):
+        return False
+
+
+def request_with_retry(
+    make_request: Callable[[], urllib.request.Request],
+    *,
+    stop_event: threading.Event,
+    item: ItemControl | None = None,
+    limiter: RateLimiter | None = None,
+    policy: RetryPolicy | None = None,
+    timeout: float = DEFAULT_TIMEOUT,
+    log: Callable[[str], None] | None = None,
+    label: str = "request",
+):
+    """
+    Open a request, retrying 429/5xx/network errors with backoff (honouring `Retry-After`).
+    Raises LinkExpiredError on 401/403/410 and DownloadFailed on other HTTP errors.
+    """
+    policy = policy or RetryPolicy()
+    attempt = 0
+    while True:
+        attempt += 1
+        check_stop(stop_event, item)
+        if limiter:
+            limiter.before_request()
+        try:
+            req = make_request()
+            if req.type != "https" and not _allow_http(req.host):
+                raise DownloadFailed(f"{label}: refusing non-https URL")
+            return urllib.request.urlopen(req, timeout=timeout)  # nosec B310 - scheme checked above
+        except urllib.error.HTTPError as e:
+            if e.code in EXPIRED_STATUS:
+                raise LinkExpiredError(e.code) from None
+            if e.code in TRANSIENT_STATUS and attempt < policy.max_attempts:
+                delay = policy.backoff(attempt, parse_retry_after(e.headers.get("Retry-After") if e.headers else None))
+                if log:
+                    log(f"{label}: HTTP {e.code}, retrying in {delay:.1f}s ({attempt}/{policy.max_attempts - 1})")
+                interruptible_sleep(delay, stop_event, item)
+                continue
+            detail = ""
+            try:
+                body = e.read(600)
+                if body:
+                    detail = ": " + redact_text(body.decode("utf-8", "replace")).strip()[:300]
+            except Exception:
+                pass
+            raise DownloadFailed(f"{label}: HTTP {e.code}{detail}") from None
+        except TRANSIENT_ERRORS as e:
+            if attempt >= policy.max_attempts:
+                raise DownloadFailed(f"{label}: network error after {attempt} attempts: {e}") from None
+            delay = policy.backoff(attempt)
+            if log:
+                log(f"{label}: network error ({e.__class__.__name__}), retrying in {delay:.1f}s")
+            interruptible_sleep(delay, stop_event, item)
+
+
 def download_with_progress(
     url: str,
     dest_path: Path,
+    *,
     stop_event: threading.Event,
-    item_pause_event: threading.Event,
-    item_stop_event: threading.Event,
     q: queue.Queue,
-    current_index: int,
-    total: int,
-) -> None:
+    item_id: str | None = None,
+    item: ItemControl | None = None,
+    limiter: RateLimiter | None = None,
+    policy: RetryPolicy | None = None,
+    timeout: float = DEFAULT_TIMEOUT,
+    headers: dict[str, str] | None = None,
+    validate_zip: bool | None = None,
+    throttle: EventThrottle | None = None,
+) -> str:
+    """
+    Resumable download to `dest_path` via `<dest>.part`. Returns "downloaded" or "skipped".
+
+    The `.part` file is kept when the link expires, the user stops/cancels, or the
+    network keeps failing, so the next run resumes with an HTTP Range request.
+    """
+    policy = policy or RetryPolicy()
+    throttle = throttle or EventThrottle(0.25)
+    validate_zip = dest_path.suffix.lower() == ".zip" if validate_zip is None else validate_zip
     dest_path.parent.mkdir(parents=True, exist_ok=True)
-    part_path = dest_path.with_suffix(dest_path.suffix + ".part")
+    part_path = dest_path.with_name(dest_path.name + ".part")
 
-    def zip_looks_valid(p: Path) -> bool:
-        try:
-            # Opening the ZIP validates headers without extracting.
-            with zipfile.ZipFile(p, "r") as zf:
-                return zf.testzip() is None
-        except Exception:
-            return False
+    def log(message: str) -> None:
+        post_event(q, "log", message=message)
 
-    if dest_path.exists() and dest_path.stat().st_size > 0:
-        if zip_looks_valid(dest_path):
-            post_event(q, "log", message=f"Skipping already-downloaded: {dest_path.name}")
+    def progress(percent: int, downloaded: int, total: int | None, rate: float, force: bool = False) -> None:
+        if item_id and throttle.ready(item_id, force=force):
             post_event(
                 q,
-                "current_progress",
-                index=current_index,
-                percent=100,
-                bytes_downloaded=dest_path.stat().st_size,
-                rate_mb_s=0.0,
+                "item_progress",
+                id=item_id,
+                percent=percent,
+                bytes=downloaded,
+                total_bytes=total,
+                rate_mb_s=rate,
             )
-            return
-        # Remove bad/incomplete file so we can re-download cleanly.
+
+    if dest_path.exists() and dest_path.stat().st_size > 0:
+        if not validate_zip or zip_is_readable(dest_path):
+            size = dest_path.stat().st_size
+            progress(100, size, size, 0.0, force=True)
+            log(f"Already downloaded: {dest_path.name}")
+            return "skipped"
+        dest_path.unlink(missing_ok=True)
+
+    attempt = 0
+    while True:
+        attempt += 1
+        resume_offset = part_path.stat().st_size if part_path.exists() else 0
+
+        def make_request(offset: int = resume_offset) -> urllib.request.Request:
+            h = {"User-Agent": USER_AGENT, "Accept": "*/*", **(headers or {})}
+            if offset > 0:
+                h["Range"] = f"bytes={offset}-"
+            return urllib.request.Request(url, headers=h)
+
         try:
-            dest_path.unlink(missing_ok=True)
-        except Exception:
-            pass
+            resp = request_with_retry(
+                make_request,
+                stop_event=stop_event,
+                item=item,
+                limiter=limiter,
+                policy=policy,
+                timeout=timeout,
+                log=log,
+                label=dest_path.name,
+            )
+        except DownloadFailed as e:
+            if "HTTP 416" in str(e) and resume_offset > 0:
+                # The part file is larger than the remote file: start over.
+                part_path.unlink(missing_ok=True)
+                continue
+            raise
 
-    # Resume support:
-    # - If a partial download exists from a prior run, resume from its byte size.
-    # - Keying is based on the destination ZIP filename, so refreshed URLs with the same
-    #   filename still resume correctly.
-    resume_offset = 0
-    if part_path.exists():
         try:
-            resume_offset = max(0, int(part_path.stat().st_size))
-        except Exception:
-            resume_offset = 0
+            with resp:
+                status = getattr(resp, "status", None) or resp.getcode()
+                length_hdr = resp.headers.get("Content-Length")
+                remaining = int(length_hdr) if length_hdr and length_hdr.isdigit() else None
+                total_bytes: int | None = None
+                content_range = resp.headers.get("Content-Range")
+                if content_range and "/" in content_range:
+                    tail = content_range.rsplit("/", 1)[1].strip()
+                    total_bytes = int(tail) if tail.isdigit() else None
 
-    headers: dict[str, str] = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Downloader.py",
-        "Accept": "*/*",
-    }
-    if resume_offset > 0:
-        headers["Range"] = f"bytes={resume_offset}-"
+                if resume_offset > 0 and status != 206:
+                    # Server ignored Range: restart from zero.
+                    resume_offset = 0
+                    total_bytes = remaining
+                elif resume_offset == 0:
+                    total_bytes = total_bytes or remaining
 
-    req = urllib.request.Request(url, headers=headers)
-    post_event(q, "set_phase", text=f"Downloading {current_index}/{total}")
+                downloaded = resume_offset
+                window_start = time.monotonic()
+                window_bytes = downloaded
+                with open(part_path, "ab" if resume_offset > 0 else "wb") as f:
+                    while True:
+                        check_stop(stop_event, item)
+                        chunk = resp.read(CHUNK_SIZE)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if limiter:
+                            limiter.consume(len(chunk))
+                        now = time.monotonic()
+                        if now - window_start >= 0.5:
+                            rate = (downloaded - window_bytes) / (now - window_start) / (1024 * 1024)
+                            percent = int(downloaded * 100 / total_bytes) if total_bytes else 0
+                            progress(max(0, min(100, percent)), downloaded, total_bytes, rate)
+                            window_start, window_bytes = now, downloaded
 
-    try:
-        with urllib.request.urlopen(req) as resp:
-            remaining_len_hdr = resp.headers.get("Content-Length")
-            remaining_len = int(remaining_len_hdr) if remaining_len_hdr and remaining_len_hdr.isdigit() else None
+            if total_bytes is not None and downloaded < total_bytes:
+                raise http.client.IncompleteRead(b"", total_bytes - downloaded)
+        except TRANSIENT_ERRORS as e:
+            if attempt >= policy.max_attempts:
+                raise DownloadFailed(f"{dest_path.name}: connection kept dropping ({e.__class__.__name__}); partial file kept") from None
+            delay = policy.backoff(attempt)
+            log(f"{dest_path.name}: connection dropped, resuming in {delay:.1f}s")
+            interruptible_sleep(delay, stop_event, item)
+            continue
+        break
 
-            # Try to get original total from Content-Range when resuming.
-            content_range = resp.headers.get("Content-Range")  # e.g. "bytes 100-999/2000"
-            total_bytes: int | None = None
-            if content_range and "/" in content_range:
-                try:
-                    after_slash = content_range.split("/", 1)[1].strip()
-                    if after_slash.isdigit():
-                        total_bytes = int(after_slash)
-                except Exception:
-                    total_bytes = None
+    if validate_zip and not zip_is_readable(part_path):
+        part_path.unlink(missing_ok=True)
+        raise DownloadFailed(f"{dest_path.name}: downloaded file is not a valid ZIP")
 
-            # If server ignored Range and returned full content (200), restart from scratch.
-            status_code = getattr(resp, "status", None) or resp.getcode()
-            resume_used = resume_offset > 0 and status_code == 206
-            if resume_offset > 0 and status_code != 206:
-                resume_offset = 0
-                resume_used = False
-                total_bytes = remaining_len  # treat as full file now
-            if resume_offset == 0 and total_bytes is None:
-                # Not resuming (or Range ignored): Content-Length is the total.
-                total_bytes = remaining_len
-
-            downloaded = resume_offset
-            start_time = time.time()
-            last_emit_time = start_time
-            last_emit_bytes = downloaded
-
-            chunk_size = 1024 * 256  # 256 KB
-            open_mode = "ab" if resume_offset > 0 and resume_used else "wb"
-            with open(part_path, open_mode) as f:
-                while True:
-                    if stop_event.is_set():
-                        raise DownloadStopSignal("cancel_all")
-                    if item_stop_event.is_set():
-                        raise DownloadStopSignal("stop_item")
-
-                    # Pause support: when paused, cooperatively wait between reads.
-                    while not item_pause_event.is_set():
-                        if stop_event.is_set():
-                            raise DownloadStopSignal("cancel_all")
-                        if item_stop_event.is_set():
-                            raise DownloadStopSignal("stop_item")
-                        item_pause_event.wait(timeout=0.5)
-
-                    chunk = resp.read(chunk_size)
-                    if not chunk:
-                        break
-                    f.write(chunk)
-                    downloaded += len(chunk)
-
-                    now = time.time()
-                    # Emit at most ~2 times/sec to keep the UI responsive.
-                    if now - last_emit_time >= 0.5:
-                        elapsed = now - last_emit_time
-                        rate_mb_s = (downloaded - last_emit_bytes) / elapsed / (1024 * 1024) if elapsed > 0 else 0.0
-
-                        if total_bytes and total_bytes > 0:
-                            percent = int(downloaded * 100 / total_bytes)
-                            percent = max(0, min(100, percent))
-                        else:
-                            # Fallback if Content-Length isn't provided.
-                            percent = 0
-
-                        post_event(
-                            q,
-                            "current_progress",
-                            index=current_index,
-                            percent=percent,
-                            bytes_downloaded=downloaded,
-                            rate_mb_s=rate_mb_s,
-                            total_bytes=total_bytes,
-                        )
-
-                        last_emit_time = now
-                        last_emit_bytes = downloaded
-    except urllib.error.HTTPError as e:
-        post_event(q, "current_progress", index=current_index, percent=0, bytes_downloaded=0, rate_mb_s=0.0)
-        post_event(q, "log", message=f"HTTP {e.code} downloading {dest_path.name}: {getattr(e, 'reason', '')}")
-        try:
-            body = e.read(1500)
-            if body:
-                decoded = body.decode("utf-8", "replace")
-                # Keep log readable.
-                post_event(q, "log", message=f"Server response: {decoded[:900]}")
-        except Exception:
-            pass
-        try:
-            part_path.unlink(missing_ok=True)
-        except Exception:
-            pass
-        raise
-    except DownloadStopSignal:
-        post_event(q, "download_stopped", index=current_index)
-        raise
-    except Exception:
-        try:
-            part_path.unlink(missing_ok=True)
-        except Exception:
-            pass
-        raise
-
-    # Finalize download.
     part_path.replace(dest_path)
-    post_event(q, "current_progress", index=current_index, percent=100, bytes_downloaded=dest_path.stat().st_size, rate_mb_s=0.0)
-    post_event(q, "log", message=f"Downloaded: {dest_path.name}")
-
+    size = dest_path.stat().st_size
+    progress(100, size, size, 0.0, force=True)
+    log(f"Downloaded: {dest_path.name}")
+    return "downloaded"
