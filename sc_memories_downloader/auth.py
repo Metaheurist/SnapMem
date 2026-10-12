@@ -2,6 +2,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 from .events import post_event
 
@@ -83,7 +84,13 @@ def fetch_snapchat_export_urls(
         cleaned: list[str] = []
         for u in urls:
             s = str(u).strip()
-            if "storage.googleapis.com" in s and "mydata~" in s and ".zip" in s:
+            parsed = urlparse(s)
+            if (
+                parsed.scheme == "https"
+                and parsed.hostname == "storage.googleapis.com"
+                and "mydata~" in parsed.path
+                and ".zip" in parsed.path
+            ):
                 cleaned.append(s)
 
         # Deduplicate while preserving order
