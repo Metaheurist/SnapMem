@@ -94,9 +94,14 @@ def _same_content(a: Path, b: Path) -> bool:
     return a.stat().st_size == b.stat().st_size and filecmp.cmp(a, b, shallow=False)
 
 
+def _norm(path: Path) -> str:
+    # No filesystem access, unlike Path.resolve(), which dominated organize time on Windows.
+    return os.path.normcase(os.path.abspath(path))
+
+
 def _is_numbered_variant(src: Path, natural: Path) -> bool:
     """`<natural stem>_N<suffix>` in the same folder: already placed after a name clash."""
-    if src.parent.resolve() != natural.parent.resolve() or src.suffix.lower() != natural.suffix.lower():
+    if _norm(src.parent) != _norm(natural.parent) or src.suffix.lower() != natural.suffix.lower():
         return False
     return re.fullmatch(re.escape(natural.stem) + r"_\d+", src.stem) is not None
 
@@ -144,7 +149,7 @@ class Organizer:
         dest_dir.mkdir(parents=True, exist_ok=True)
         natural = dest_dir / target_name(dt, kind, src.suffix)
 
-        if src.resolve() == natural.resolve() or _is_numbered_variant(src, natural):
+        if _norm(src) == _norm(natural) or _is_numbered_variant(src, natural):
             dest = src
         elif natural.exists() and _same_content(natural, src):
             self.skipped += 1

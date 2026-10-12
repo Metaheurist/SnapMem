@@ -6,6 +6,7 @@ EXPORT_ZIP_HOST = "storage.googleapis.com"
 SNAPCHAT_DOMAIN = "snapchat.com"
 
 _URL_QUERY_RE = re.compile(r"(https?://[^\s?\"'<>]+)\?[^\s\"'<>]*")
+_SECRET_PARAM_RE = re.compile(r"(?i)\b(sig|signature|x-goog-signature|x-goog-credential|token|key|uid)=[^&\s\"'<>]+")
 
 
 def get_zip_filename_from_url(url: str) -> str:
@@ -16,8 +17,9 @@ def get_zip_filename_from_url(url: str) -> str:
 
 def is_export_zip_url(url: str) -> bool:
     """True for an https `mydata~*.zip` link served from the Snapchat export bucket."""
+    url = url.strip()
     try:
-        parsed = urllib.parse.urlparse(url.strip())
+        parsed = urllib.parse.urlparse(url)
     except ValueError:
         return False
     if parsed.scheme != "https" or (parsed.hostname or "").lower() != EXPORT_ZIP_HOST:
@@ -48,8 +50,8 @@ def redact_url(url: str) -> str:
 
 
 def redact_text(text: str) -> str:
-    """Redact the query string of every URL found in free text (server error bodies)."""
-    return _URL_QUERY_RE.sub(r"\1?<redacted>", text)
+    """Redact URL query strings and loose signature parameters found in free text (server error bodies)."""
+    return _SECRET_PARAM_RE.sub(r"\1=<redacted>", _URL_QUERY_RE.sub(r"\1?<redacted>", text))
 
 
 def load_urls(urls_file: Path) -> list[str]:
