@@ -1,37 +1,55 @@
 import os
+import shutil
 import sys
 import time
 from pathlib import Path
-from urllib.parse import urlparse
+from typing import Callable
 
-from .events import post_event
+from .paths import browser_profile_dir
+from .urls import is_export_zip_url
+
+SNAPCHAT_DMD_URL = "https://accounts.snapchat.com/v2/download-my-data"
+LINKS_STABLE_SEC = 10
 
 
 def configure_playwright_browsers_path() -> None:
     """
-    Ensure Playwright can find Chromium browsers when bundled by PyInstaller.
+    Point Playwright at the Chromium bundled in the packed EXE.
 
-    When running from a onefile EXE, PyInstaller extracts the bundled files to
-    `sys._MEIPASS`. The build script can include Playwright browsers under a
-    `playwright-browsers/` folder; we point Playwright to it via
-    `PLAYWRIGHT_BROWSERS_PATH`.
+    PyInstaller onefile extracts bundled data to `sys._MEIPASS`; the build adds the
+    browsers under `playwright-browsers/`.
     """
-    if os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
+    if os.environ.get("PLAYWRIGHT_BROWSERS_PATH") or not getattr(sys, "frozen", False):
         return
-    if not getattr(sys, "frozen", False):
-        return
-
-    try:
-        meipass = getattr(sys, "_MEIPASS", None)
-        if not meipass:
-            return
-        base = Path(meipass)
-        candidate = base / "playwright-browsers"
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidate = Path(meipass) / "playwright-browsers"
         if candidate.exists():
             os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(candidate)
-    except Exception:
-        # Best-effort only.
-        return
+
+
+def has_saved_session() -> bool:
+    profile = browser_profile_dir()
+    return profile.is_dir() and any(profile.iterdir())
+
+
+def sign_out() -> bool:
+    """Delete the saved browser profile (cookies, local storage). Returns True if one existed."""
+    profile = browser_profile_dir()
+    if not profile.exists():
+        return False
+    shutil.rmtree(profile, ignore_errors=True)
+    return not profile.exists()
+
+
+def _dedupe(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for s in items:
+        if s not in seen:
+            seen.add(s)
+            out.append(s)
+    return out
 
 
 def fetch_snapchat_export_urls(
@@ -39,158 +57,133 @@ def fetch_snapchat_export_urls(
     min_urls: int = 5,
     timeout_sec: int = 300,
     write_urls_file: bool = False,
+    keep_signed_in: bool = False,
+    log: Callable[[str], None] = print,
+    should_stop: Callable[[], bool] = lambda: False,
 ) -> list[str]:
     """
-    Opens Snapchat "Download My Data" page, you log in, then we scrape
-    `mydata~*.zip` hrefs.
+    Open Snapchat's "Download My Data" page in a real browser window, let the user
+    sign in, then collect the `mydata~*.zip` export links.
 
-    Requires Playwright + Chromium.
+    Returns once `min_urls` links are found, or once at least one link is found and
+    the list has not grown for LINKS_STABLE_SEC seconds.
     """
     configure_playwright_browsers_path()
     try:
-        # Local import so importing the package doesn't require Playwright at runtime.
-        from playwright.sync_api import Error as PlaywrightError  # type: ignore[import-not-found]
-        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError  # type: ignore[import-not-found]
-        from playwright.sync_api import sync_playwright  # type: ignore[import-not-found]
-    except Exception:
-        print(
-            "playwright is required to fetch fresh Snapchat URLs.\n"
-            "Install with:\n"
-            "  pip install playwright\n"
-            "  python -m playwright install chromium",
-            file=sys.stderr,
-        )
-        raise
+        from playwright.sync_api import Error as PlaywrightError
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+        from playwright.sync_api import sync_playwright
+    except ImportError as e:
+        raise RuntimeError(
+            "Playwright is required to sign in. Install with: pip install playwright && python -m playwright install chromium"
+        ) from e
 
-    SNAPCHAT_URL = "https://accounts.snapchat.com/v2/download-my-data"
-    if write_urls_file:
-        urls_file.parent.mkdir(parents=True, exist_ok=True)
+    log("Opening Snapchat in a browser window. Sign in there (MFA and captcha are fine).")
 
-    print("Opening Snapchat download page...")
-    print("Please log in (MFA/captcha is fine). Waiting for export list...")
-
-    def scrape_urls_from_page(page) -> list[str]:
-        loc = page.locator('a[href*="mydata~"][href*=".zip"]')
+    def scrape(page) -> list[str]:
         try:
-            count = loc.count()
+            hrefs = page.locator('a[href*="mydata~"][href*=".zip"]').evaluate_all(
+                'els => els.map(e => e.getAttribute("href")).filter(Boolean)'
+            )
         except PlaywrightError:
             return []
-        if count == 0:
-            return []
-        try:
-            urls = loc.evaluate_all('els => els.map(e => e.getAttribute("href")).filter(Boolean)')
-        except PlaywrightError:
-            return []
-        cleaned: list[str] = []
-        for u in urls:
-            s = str(u).strip()
-            parsed = urlparse(s)
-            if (
-                parsed.scheme == "https"
-                and parsed.hostname == "storage.googleapis.com"
-                and "mydata~" in parsed.path
-                and ".zip" in parsed.path
-            ):
-                cleaned.append(s)
+        return [str(h).strip() for h in hrefs if is_export_zip_url(str(h))]
 
-        # Deduplicate while preserving order
-        seen: set[str] = set()
-        out: list[str] = []
-        for s in cleaned:
-            if s in seen:
-                continue
-            seen.add(s)
-            out.append(s)
-        return out
+    launch_variants = (
+        {"channel": "msedge"},
+        {},
+    )
+    common = {"headless": False, "args": ["--start-maximized"]}
 
     with sync_playwright() as p:
+        context = None
         browser = None
-        for launch_kwargs in (
-            {"headless": False, "channel": "msedge", "args": ["--start-maximized"]},
-            {"headless": False, "args": ["--start-maximized"]},
-        ):
+        last_error: Exception | None = None
+        for extra in launch_variants:
             try:
-                browser = p.chromium.launch(**launch_kwargs)
+                if keep_signed_in:
+                    profile = browser_profile_dir()
+                    profile.mkdir(parents=True, exist_ok=True)
+                    context = p.chromium.launch_persistent_context(str(profile), no_viewport=True, **common, **extra)
+                else:
+                    browser = p.chromium.launch(**common, **extra)
+                    context = browser.new_context(no_viewport=True)
                 break
-            except Exception:
-                browser = None
-        if browser is None:
-            raise RuntimeError("Failed to launch a Playwright browser (Edge/Chromium).")
+            except Exception as e:
+                last_error = e
+                context = None
+        if context is None:
+            raise RuntimeError(f"Could not start Edge or Chromium: {last_error}")
 
-        context = browser.new_context(no_viewport=True)
-        page = context.new_page()
-
+        page = context.pages[0] if context.pages else context.new_page()
         try:
-            page.goto(SNAPCHAT_URL, wait_until="domcontentloaded", timeout=60000)
+            page.goto(SNAPCHAT_DMD_URL, wait_until="domcontentloaded", timeout=60000)
         except PlaywrightTimeoutError:
-            print("Startup navigation timed out. Continue login manually in the opened browser window.")
+            log("The page is slow to load. Continue signing in in the browser window.")
         except PlaywrightError as e:
-            print(f"Startup navigation warning: {e}")
+            log(f"Navigation warning: {e}")
 
-        start = time.time()
+        start = time.monotonic()
         urls: list[str] = []
-        last_refresh_attempt = 0.0
+        last_growth = start
+        last_reload = start
+        try:
+            while time.monotonic() - start < timeout_sec:
+                if should_stop():
+                    raise RuntimeError("Sign-in cancelled.")
+                open_pages = [pg for pg in context.pages if not pg.is_closed()]
+                if not open_pages:
+                    raise RuntimeError("The browser window was closed before any export links were found.")
 
-        while time.time() - start < timeout_sec:
-            if not context.pages:
-                raise RuntimeError("Browser window was closed before URLs were found.")
+                for open_page in open_pages:
+                    for label in ("Show exports", "View exports"):
+                        try:
+                            btn = open_page.get_by_role("button", name=label)
+                            if btn.count() > 0:
+                                btn.first.click(timeout=500)
+                                break
+                        except PlaywrightError:
+                            continue
 
-            # If exports are collapsed, try expanding.
-            all_pages = list(context.pages)
-            for open_page in all_pages:
-                if open_page.is_closed():
-                    continue
+                found = _dedupe([u for pg in open_pages for u in scrape(pg)])
+                now = time.monotonic()
+                if len(found) > len(urls):
+                    urls = found
+                    last_growth = now
+                    log(f"Found {len(urls)} export link(s)...")
+                if len(urls) >= min_urls or (urls and now - last_growth >= LINKS_STABLE_SEC):
+                    break
+                # Reload only on the export page itself, never while the user is on the login form.
+                if not urls and now - last_reload >= 30 and not page.is_closed() and page.url.split("?", 1)[0].rstrip("/") == SNAPCHAT_DMD_URL.rstrip("/"):
+                    last_reload = now
+                    try:
+                        page.goto(SNAPCHAT_DMD_URL, wait_until="domcontentloaded", timeout=15000)
+                    except PlaywrightError:
+                        pass
                 try:
-                    for selector in (
-                        'button:has-text("Show exports")',
-                        'button:has-text("View exports")',
-                        'button:has-text("Exports")',
-                    ):
-                        btn = open_page.locator(selector)
-                        if btn.count() > 0:
-                            btn.first.click(timeout=500)
-                            break
-                except Exception:
-                    continue
-
-            # Scrape from all open pages (Snapchat auth can swap tabs/pages).
-            scraped: list[str] = []
-            for open_page in all_pages:
-                if open_page.is_closed():
-                    continue
-                scraped.extend(scrape_urls_from_page(open_page))
-
-            # Deduplicate while preserving order.
-            seen_urls: set[str] = set()
-            urls = []
-            for u in scraped:
-                if u in seen_urls:
-                    continue
-                seen_urls.add(u)
-                urls.append(u)
-            if len(urls) >= min_urls:
-                break
-            if not urls and time.time() - last_refresh_attempt >= 20:
-                last_refresh_attempt = time.time()
+                    open_pages[0].wait_for_timeout(1000)
+                except PlaywrightError:
+                    raise RuntimeError("The browser session closed while waiting for export links.") from None
+        finally:
+            try:
+                context.close()
+            except Exception:
+                pass
+            if browser is not None:
                 try:
-                    if not page.is_closed():
-                        page.goto(SNAPCHAT_URL, wait_until="domcontentloaded", timeout=15000)
+                    browser.close()
                 except Exception:
                     pass
-            try:
-                page.wait_for_timeout(1000)
-            except PlaywrightError:
-                raise RuntimeError("Browser session closed while waiting for export URLs.")
-
-        browser.close()
 
     if not urls:
-        raise RuntimeError("No download ZIP URLs found. Make sure the exports list is visible.")
+        raise RuntimeError(
+            "No export ZIP links found. Check that an export has finished on the Download My Data page."
+        )
 
     if write_urls_file:
+        urls_file.parent.mkdir(parents=True, exist_ok=True)
         urls_file.write_text("\n".join(urls) + "\n", encoding="utf-8")
-        print(f"Saved {len(urls)} URLs to: {urls_file}")
+        log(f"Saved {len(urls)} links to {urls_file.name}")
     else:
-        print(f"Scraped {len(urls)} URLs.")
+        log(f"Found {len(urls)} export link(s).")
     return urls
-

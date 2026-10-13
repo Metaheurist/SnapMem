@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="200 150 624 760" width="624" height="760">
+  <title>SnapMem mark</title>
+  <path d="M252 520 C252 340 370 196 512 196 C654 196 772 340 772 520 L772 812 Q729 760 685 812 Q642 864 598 812 Q555 760 512 812 Q469 864 425 812 Q382 760 338 812 Q295 864 252 812 Z"
+        fill="none" stroke="#FFFC00" stroke-width="44" stroke-linejoin="round"/>
+  <g fill="none" stroke="#FFFC00" stroke-width="48" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M512 360 L512 600"/>
+    <path d="M418 510 L512 604 L606 510"/>
+    <path d="M396 680 L628 680"/>
+  </g>
+</svg>

@@ -1,0 +1,136 @@
+name: Build and Release - Windows EXE
+
+on:
+  push:
+    branches: [master]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - ".github/dependabot.yml"
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  bump-version:
+    name: Bump version
+    # Pushes only; the bot's own version commit must not start another release.
+    if: github.event_name != 'pull_request' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
+      sha: ${{ steps.push.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Bump .github/build-version.txt
+        id: bump
+        shell: bash
+        run: |
+          set -euo pipefail
+          f=.github/build-version.txt
+          current="$(tr -d '\r\n[:space:]' < "$f" 2>/dev/null || true)"
+          current="${current:-1.0.0}"
+          IFS='.' read -r major minor patch <<< "$current"
+          if [[ -z "${major:-}" || -z "${minor:-}" || -z "${patch:-}" ]]; then
+            echo "Invalid version in $f: $current"; exit 1
+          fi
+          if (( patch >= 99 )); then patch=0; minor=$((minor + 1)); else patch=$((patch + 1)); fi
+          next="${major}.${minor}.${patch}"
+          echo "$next" > "$f"
+          echo "version=$next" >> "$GITHUB_OUTPUT"
+          echo "Bumped $current -> $next"
+      - name: Commit and push
+        id: push
+        shell: bash
+        env:
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/build-version.txt
+          git commit -m "chore: bump build version to ${VERSION} [skip ci]"
+          git push
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build EXE (x64)
+    needs: bump-version
+    if: ${{ !cancelled() && (needs.bump-version.result == 'success' || github.event_name == 'pull_request') }}
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.bump-version.outputs.version || '0.0.0' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ needs.bump-version.outputs.sha || github.sha }}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          architecture: x64
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Install build tools
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Build and self-test
+        shell: pwsh
+        run: ./build_windows_exe.ps1 -Version $env:VERSION -SkipInstall
+
+      - name: SBOM and checksums
+        shell: pwsh
+        run: |
+          $name = "SnapMem-v$env:VERSION-win-x64"
+          New-Item -ItemType Directory -Force release | Out-Null
+          Move-Item dist/SnapMem.exe "release/$name.exe"
+          python -m venv sbom-env
+          sbom-env/Scripts/python -m pip install --quiet -r requirements.txt
+          cyclonedx-py environment sbom-env/Scripts/python.exe --of JSON -o "release/$name.sbom.cdx.json"
+          Get-ChildItem release -File | ForEach-Object {
+            "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
+          } | Set-Content -Encoding ascii release/SHA256SUMS.txt
+          Get-Content release/SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: SnapMem-${{ env.VERSION }}-win-x64
+          path: release/*
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish GitHub Release
+    needs: [bump-version, build]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: SnapMem-${{ needs.bump-version.outputs.version }}-win-x64
+          path: release
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.bump-version.outputs.version }}
+          TARGET: ${{ needs.bump-version.outputs.sha }}
+        run: |
+          gh release create "v${VERSION}" release/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --target "${TARGET}" \
+            --title "SnapMem v${VERSION}" \
+            --generate-notes \
+            --latest
