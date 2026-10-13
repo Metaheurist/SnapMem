@@ -1,3 +1,4 @@
+import contextlib
 import os
 import shutil
 import sys
@@ -165,15 +166,11 @@ def fetch_snapchat_export_urls(
                 except PlaywrightError:
                     raise RuntimeError("The browser session closed while waiting for export links.") from None
         finally:
-            try:
+            with contextlib.suppress(Exception):
                 context.close()
-            except Exception:
-                pass
             if browser is not None:
-                try:
+                with contextlib.suppress(Exception):
                     browser.close()
-                except Exception:
-                    pass
 
     if not urls:
         raise RuntimeError(

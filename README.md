@@ -162,11 +162,17 @@ The script installs `requirements-dev.txt`, writes the version to `sc_memories_d
 | Testing | `ci-tests.yml` | push to `master`, pull requests | ruff, then pytest with coverage on Windows (Python 3.11, 3.12) and Ubuntu (3.12), then `--self-test` |
 | Benchmarking | `benchmarks.yml` | push to `master`, pull requests | pytest-benchmark for extract, organize, library loading and the rate limiter; pull requests are compared against `master` in the job summary |
 | Security - Code Scanning | `security-codeql.yml` | push, pull requests, weekly | CodeQL `security-extended` for Python and GitHub Actions |
-| Security - CVE Scanning | `security-cve-scanning.yml` | push, pull requests, daily | pip-audit on both requirements files, OSV-Scanner (SARIF to code scanning), dependency review on pull requests |
+| Security - CVE Scanning | `security-cve-scanning.yml` | push, pull requests, daily | pip-audit on both lock files, OSV-Scanner (SARIF to code scanning), dependency review on pull requests |
 | Security - SAST and Secrets | `security-sast-secrets.yml` | push, pull requests, weekly | Bandit (SARIF to code scanning, fails on high severity) and Gitleaks (new commits on push and pull requests, the full history on the weekly run) |
 | Security - OpenSSF Scorecard | `security-scorecard.yml` | push to `master`, weekly | Scorecard, published and uploaded to code scanning |
 | Build and Release - Windows EXE | `release-build-windows.yml` | push to `master`, pull requests | Builds and self-tests the EXE. On `master` it also bumps `.github/build-version.txt` and publishes the EXE, a CycloneDX SBOM and `SHA256SUMS.txt` as a GitHub release |
 
 Every action is pinned to a full commit SHA, and each job declares only the permissions it needs. `.github/dependabot.yml` opens weekly update PRs for pip packages and actions.
 
+CI installs Python packages with `pip install --require-hashes` from lock files: `requirements.lock`, `requirements-dev.lock`, and `.github/requirements/ci-tools.lock` for the ruff, Bandit and pip-audit jobs. They are compiled from the `requirements*.txt` pins by `scripts/lock_requirements.ps1` (needs `uv`: `python -m pip install uv`). When a Dependabot PR bumps a pin, run that script and commit the locks; the lint job's `scripts/check_locks.py` fails until the locks match.
+
 See [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
+
+## License
+
+[MIT](LICENSE)

@@ -81,9 +81,9 @@ jobs:
           python-version: "3.12"
           architecture: x64
           cache: pip
-          cache-dependency-path: requirements*.txt
+          cache-dependency-path: requirements*.lock
       - name: Install build tools
-        run: python -m pip install -r requirements-dev.txt
+        run: python -m pip install --require-hashes -r requirements-dev.lock
 
       - name: Build and self-test
         shell: pwsh
@@ -96,7 +96,7 @@ jobs:
           New-Item -ItemType Directory -Force release | Out-Null
           Move-Item dist/SnapMem.exe "release/$name.exe"
           python -m venv sbom-env
-          sbom-env/Scripts/python -m pip install --quiet -r requirements.txt
+          sbom-env/Scripts/python -m pip install --quiet --require-hashes -r requirements.lock
           cyclonedx-py environment sbom-env/Scripts/python.exe --of JSON -o "release/$name.sbom.cdx.json"
           Get-ChildItem release -File | ForEach-Object {
             "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name

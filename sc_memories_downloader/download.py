@@ -1,3 +1,4 @@
+import contextlib
 import http.client
 import queue
 import socket
@@ -150,12 +151,10 @@ def request_with_retry(
                 interruptible_sleep(delay, stop_event, item)
                 continue
             detail = ""
-            try:
+            with contextlib.suppress(Exception):
                 body = e.read(600)
                 if body:
                     detail = ": " + redact_text(body.decode("utf-8", "replace")).strip()[:300]
-            except Exception:
-                pass
             raise DownloadFailed(f"{label}: HTTP {e.code}{detail}") from None
         except TRANSIENT_ERRORS as e:
             if attempt >= policy.max_attempts:

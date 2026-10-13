@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Report vulnerabilities privately through GitHub: **Security > Report a vulnerability** on this repository. Please do not open a public issue. Include the SnapMem version (shown at the bottom of the sidebar, or the release tag), what you did, and what happened.
+Report vulnerabilities privately through GitHub: **Security > Report a vulnerability** on this repository, or open the form directly at <https://github.com/Metaheurist/SnapMem/security/advisories/new>. Please do not open a public issue. Include the SnapMem version (shown at the bottom of the sidebar, or the release tag), what you did, and what happened.
 
 Only the latest release is fixed. Older EXEs are not patched.
 

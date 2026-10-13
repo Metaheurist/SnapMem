@@ -6,7 +6,7 @@ UI state for the Flet app. No Flet imports here: worker threads post events to
 import os
 import queue
 import shutil
-import subprocess
+import subprocess  # nosec B404 - only opens a folder with open/xdg-open and a fixed argument list
 import sys
 import threading
 from collections import deque
