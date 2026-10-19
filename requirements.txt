@@ -1,4 +1,4 @@
 flet==1.0.4
 flet-desktop==1.0.4
-playwright==1.63.0
+playwright==1.64.0
 pillow==12.3.0
