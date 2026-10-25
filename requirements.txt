@@ -1,5 +1,5 @@
-flet==1.0.4
-flet-desktop==1.0.4
+flet==1.0.5
+flet-desktop==1.0.5
 playwright==1.64.1
 pillow==13.0.0
 # Pulled in by httpx. Pinned because releases before 2026.10.19 trust a compromised CA (PYSEC-2026-4320).
