@@ -1,5 +1,6 @@
 -r requirements.txt
-flet-cli==1.0.4
+flet-cli==1.0.5
+flet-web==1.0.5
 pyinstaller==6.22.3
 pytest==9.1.1
 pytest-cov==7.1.0

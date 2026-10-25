@@ -14,7 +14,7 @@ pip install -r requirements.txt
 python -m playwright install chromium
 ```
 
-`requirements.txt` pins Flet 1.0.4 (UI), Playwright (sign-in) and Pillow (EXIF dates and thumbnails). `requirements-dev.txt` adds the test, lint, security and build tools.
+`requirements.txt` pins Flet 1.0.5 (UI), Playwright (sign-in) and Pillow (EXIF dates and thumbnails). `requirements-dev.txt` adds the test, lint, security and build tools.
 
 ## Run
 
