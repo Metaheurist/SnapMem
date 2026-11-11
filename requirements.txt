@@ -4,3 +4,5 @@ playwright==1.64.1
 pillow==13.0.0
 # Pulled in by httpx. Pinned because releases before 2026.10.19 trust a compromised CA (PYSEC-2026-4320).
 certifi==2026.10.23
+# Pulled in by flet. Pinned because 4.0.0 skips device_code validation (CVE-2026-49272).
+oauthlib==4.0.1
