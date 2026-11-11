@@ -11,15 +11,15 @@ certifi==2026.10.23 \
     #   -r requirements.txt
     #   httpcore
     #   httpx
-flet==1.0.5 \
-    --hash=sha256:1bfde51f557af24cafce8092afdaf80fb778ec9d03fdf343ca46b5f0a7af2bbf \
-    --hash=sha256:95a078c0259b56a2d08c772555e53c8ffd24496ba0a319e24bdf7a9f05ad5fe9
+flet==1.1.2 \
+    --hash=sha256:56a29f7d4103cff9da7925e967bac367318dfb69f91db2258befa9ddab0552ff \
+    --hash=sha256:dd5114b7cb4b5186e647d2b953a1162ee995c5657f78f8e7c63f94a5f24e8449
     # via
     #   -r requirements.txt
     #   flet-desktop
-flet-desktop==1.0.5 \
-    --hash=sha256:b5fa9b14be3a832df5dd0385d2df1a7bd679b831d443c7be8b682f1758a7c6aa \
-    --hash=sha256:e2cab601314f66e57b5c6302b979e557e9b3f559a18b8e2702ed7d1833a38d6a
+flet-desktop==1.1.2 \
+    --hash=sha256:e192133923f462a87ad7b92bc1f1b94947c341083c31340f12964da653301f28 \
+    --hash=sha256:eca291ccfaa407b9895502fb0133fcf5ae346459dab21dd25569df49c0a85235
     # via -r requirements.txt
 greenlet==3.5.6 \
     --hash=sha256:0616b8f878098c5681fd8f0dc92d887551717402342a70f0abcbfea5f5ad8a44 \
