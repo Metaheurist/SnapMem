@@ -12,4 +12,4 @@ filelock==4.2.10
 setuptools==84.2.1
 bandit[sarif]==1.9.4
 pip-audit==2.10.1
-cyclonedx-bom==7.5.0
+cyclonedx-bom==8.0.1
