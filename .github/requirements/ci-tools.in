@@ -1,5 +1,5 @@
 # CI-only tools for the lint, Bandit and pip-audit jobs. Versions mirror requirements-dev.txt.
-ruff==0.17.4
+ruff==0.17.5
 filelock==4.2.10
 setuptools==84.2.1
 certifi==2026.10.23
