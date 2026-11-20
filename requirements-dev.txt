@@ -5,7 +5,7 @@ pyinstaller==6.22.3
 pytest==9.2.0
 pytest-cov==7.1.0
 pytest-benchmark==5.3.1
-ruff==0.17.4
+ruff==0.17.5
 # Pulled in by pip-audit. Pinned because releases before 4.2.1 follow symlinks out of the lock directory.
 filelock==4.2.10
 # Pulled in by bandit and cyclonedx. Pinned because releases before 84.1.0 are vulnerable (GHSA-xmj3-9gf7-h52w).
