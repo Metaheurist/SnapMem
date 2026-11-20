@@ -12,6 +12,8 @@ filelock==4.2.10
 setuptools==84.2.1
 bandit[sarif]==1.9.4
 pip-audit==2.10.1
+# Explicit extra so --require-hashes installs match pip-audit's CacheControl[filecache] dep.
+cachecontrol[filecache]==0.14.4
 cyclonedx-bom==8.0.1
 
 # Pulled in by fastapi (via flet-web). Pinned because 1.45.1 has ReDoS in TraceContextTextMapPropagator (CVE-2026-126360).
