@@ -5,15 +5,15 @@ pyinstaller==6.22.3
 pytest==9.2.0
 pytest-cov==7.1.0
 pytest-benchmark==5.3.1
-ruff==0.17.5
+ruff==0.17.6
 # Pulled in by pip-audit. Pinned because releases before 4.2.1 follow symlinks out of the lock directory.
-filelock==4.2.10
+filelock==4.2.12
 # Pulled in by bandit and cyclonedx. Pinned because releases before 84.1.0 are vulnerable (GHSA-xmj3-9gf7-h52w).
 setuptools==84.2.1
 bandit[sarif]==1.9.4
 pip-audit==2.10.1
 # Explicit extra so --require-hashes installs match pip-audit's CacheControl[filecache] dep.
-cachecontrol[filecache]==0.14.4
+cachecontrol[filecache]==0.15.0
 cyclonedx-bom==8.0.1
 
 # Pulled in by fastapi (via flet-web). Pinned because 1.45.1 has ReDoS in TraceContextTextMapPropagator (CVE-2026-126360).
