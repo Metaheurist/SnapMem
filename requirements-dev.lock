@@ -384,9 +384,9 @@ coverage==7.16.2 \
     --hash=sha256:fb9d92ecfe2d5b494367c67f7446f8b75b68d8d0c8cf3bc3e6997478be25d9e2 \
     --hash=sha256:fd3d72233eb8b48acc94fa57d44e2d32ce8e7abed02882ccb6d855ccc4ed33ec
     # via pytest-cov
-cyclonedx-bom==8.0.1 \
-    --hash=sha256:a32c8bb2c4b436e0d6b7ee3b9f0899efdfc91e8f5d9652975467d31e4c20b900 \
-    --hash=sha256:b91ac00e0d031aaee0bc69fd3851384b2c36e569859df13b2a564b5d2d67aab3
+cyclonedx-bom==9.0.0 \
+    --hash=sha256:15ccb78616831688cab1d1ddd5e0ba2e7886cd83462f63d11d1b922f43a294c0 \
+    --hash=sha256:23394e24ff47bbf4c614e8a7d5ca5e18c64869a091f7e35f3baa2faea2390972
     # via -r requirements-dev.txt
 cyclonedx-python-lib==11.12.0 \
     --hash=sha256:0e807521a921a5c3cb8ce1153f8a61d29eedfe76a46aac2796b7c6b573391a54 \
